@@ -10,29 +10,81 @@ use futures_util::{SinkExt, StreamExt};
 use local_ip_address::local_ip;
 use std::{collections::HashMap, sync::Arc, process::Stdio};
 use tokio::sync::broadcast;
-use tokio::process::Command;
+use tokio::process::Command as TokioCommand;
+use std::process::Command as StdCommand;
 use tokio_util::io::ReaderStream;
 use tower::ServiceExt;
 use tower_http::{cors::CorsLayer, services::ServeFile};
+use rusqlite::Connection;
 
 struct AppState {
     tx: broadcast::Sender<String>,
 }
 
-// === İŞTE EFSANEVİ TRANSCODING (DÖNÜŞTÜRME) MOTORU ===
+async fn get_catalog() -> impl IntoResponse {
+    let db_path = "kinflix.db"; 
+    let mut movies = Vec::new();
+
+    if let Ok(conn) = Connection::open(db_path) {
+        if let Ok(mut stmt) = conn.prepare("SELECT title, year, folder_path, video_path, backdrop_url, poster_url, overview, rating, genres, runtime, progress, watchlist, director, actors, collection_name, is_watched, watch_count FROM movies") {
+            let movie_iter = stmt.query_map([], |row| {
+                Ok(serde_json::json!({
+                    "title": row.get::<_, String>(0).unwrap_or_default(),
+                    "year": row.get::<_, Option<i32>>(1).unwrap_or(None),
+                    "folder_path": row.get::<_, String>(2).unwrap_or_default(),
+                    "video_path": row.get::<_, String>(3).unwrap_or_default(),
+                    "backdrop_url": row.get::<_, Option<String>>(4).unwrap_or(None),
+                    "poster_url": row.get::<_, Option<String>>(5).unwrap_or(None),
+                    "overview": row.get::<_, Option<String>>(6).unwrap_or(None),
+                    "rating": row.get::<_, Option<f64>>(7).unwrap_or(None),
+                    "genres": row.get::<_, Option<String>>(8).unwrap_or(None),
+                    "runtime": row.get::<_, Option<i32>>(9).unwrap_or(None),
+                    "progress": row.get::<_, Option<i32>>(10).unwrap_or(None),
+                    "watchlist": row.get::<_, i32>(11).unwrap_or(0),
+                    "director": row.get::<_, Option<String>>(12).unwrap_or(None),
+                    "actors": row.get::<_, Option<String>>(13).unwrap_or(None),
+                    "collection_name": row.get::<_, Option<String>>(14).unwrap_or(None),
+                    "is_watched": row.get::<_, i32>(15).unwrap_or(0),
+                    "watch_count": row.get::<_, i32>(16).unwrap_or(0),
+                }))
+            });
+
+            if let Ok(iter) = movie_iter {
+                for m in iter.flatten() {
+                    movies.push(m);
+                }
+            }
+        }
+    }
+    axum::Json(movies)
+}
+
+// === 2. ALTYAZI DAĞITICI (MİSAFİRLER İÇİN) ===
+async fn serve_subtitle(Query(params): Query<HashMap<String, String>>) -> impl IntoResponse {
+    let path = params.get("path").unwrap_or(&String::new()).to_string();
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        Response::builder()
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .body(Body::from(content))
+            .unwrap()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+// === 3. VİDEO STREAMING & TRANSCODING (FFMPEG) ===
 async fn stream_video(Query(params): Query<HashMap<String, String>>, req: Request) -> Response {
     let path = params.get("path").unwrap_or(&String::new()).to_string();
     let quality = params.get("quality").unwrap_or(&String::from("original")).to_string();
 
-    // Eğer "Orijinal" seçilmişse, eski taktik (Hiç işlemci yorma, dosyayı direkt aktar)
     if quality == "original" || quality.is_empty() {
         return match ServeFile::new(&path).oneshot(req).await {
-            Ok(res) => res.into_response(), // Burada standart Body'e çeviriyoruz
+            Ok(res) => res.into_response(),
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
     }
 
-    // Seçilen Kaliteye Göre Çözünürlük ve Bant Genişliği Ayarı
     let (scale, bitrate) = match quality.as_str() {
         "1080p" => ("scale=-2:1080", "4M"),
         "720p"  => ("scale=-2:720", "2M"),
@@ -40,32 +92,27 @@ async fn stream_video(Query(params): Query<HashMap<String, String>>, req: Reques
         _       => ("scale=-2:720", "2M"),
     };
 
-    println!("🎥 Anlık Dönüştürme Başladı: {} (Hedef: {})", path, quality);
-
-    // FFmpeg'i Arka Planda Görünmez Şekilde Çalıştır
-    let mut child = match Command::new("ffmpeg")
+    let mut child = match TokioCommand::new("ffmpeg")
         .args(&[
-            "-i", &path,                          // Girdi dosyası
-            "-vf", scale,                         // Çözünürlüğü ayarla (Örn: 720p)
-            "-c:v", "libx264",                    // H.264 formatına çevir
-            "-preset", "ultrafast",               // İşlemciyi yorma, en hızlı şekilde çevir
-            "-b:v", bitrate,                      // İnternet gönderim hızı (Örn: 2 Mbps)
-            "-maxrate", bitrate,                  // Maksimum hızı sınırla (Donmaları engeller)
-            "-bufsize", "4M",                     // Tampon bellek
-            "-c:a", "aac",                        // Sesi AAC yap
-            "-b:a", "128k",                       // Ses kalitesi
-            "-movflags", "frag_keyframe+empty_moov", // Ağa akış yapabilmek için "Parçalı MP4" yap
-            "-f", "mp4",                          // Çıktı formatı
-            "-"                                   // Dosyaya kaydetme, DIREKT STDOUT'a (Bize) fırlat!
+            "-i", &path,
+            "-vf", scale,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-b:v", bitrate,
+            "-maxrate", bitrate,
+            "-bufsize", "4M",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "frag_keyframe+empty_moov",
+            "-f", "mp4",
+            "-"
         ])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null()) // Konsolu loglarla boğmasın diye hataları şimdilik gizle
+        .stderr(Stdio::null())
         .spawn()
     {
         Ok(child) => child,
         Err(_) => {
-            println!("❌ FFmpeg sistemde bulunamadı! Lütfen FFmpeg kurun. Orijinal dosya gönderiliyor...");
-            // HATANIN ÇÖZÜLDÜĞÜ YER: unwrap_or_else yerine match ile into_response yaptık!
             return match ServeFile::new(&path).oneshot(req).await {
                 Ok(res) => res.into_response(),
                 Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -73,12 +120,10 @@ async fn stream_video(Query(params): Query<HashMap<String, String>>, req: Reques
         }
     };
 
-    // FFmpeg'in fırlattığı byte'ları alıp HTTP Body (Akış) haline getiriyoruz
     let stdout = child.stdout.take().unwrap();
     let stream = ReaderStream::new(stdout);
     let body = Body::from_stream(stream);
 
-    // Akışı (Stream) tarayıcıya Video formatında yolla
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "video/mp4")
@@ -86,7 +131,7 @@ async fn stream_video(Query(params): Query<HashMap<String, String>>, req: Reques
         .unwrap()
 }
 
-// === WEBSOCKET (PARTY WATCH) YÖNETİCİSİ ===
+// === 4. ESKİ WEBSOCKET (WEBRTC İLE BİRLİKTE YEDEK OLARAK DURUYOR) ===
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
@@ -114,7 +159,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     }
 }
 
-// === MEVCUT TAURİ KOMUTLARI ===
+// === 5. TAURI KOMUTLARI ===
 #[tauri::command]
 fn get_local_ip() -> Result<String, String> {
     match local_ip() {
@@ -127,7 +172,6 @@ fn get_local_ip() -> Result<String, String> {
 fn get_local_subtitles(video_path: String) -> Result<Vec<String>, String> {
     let path = std::path::Path::new(&video_path);
     let dir = path.parent().ok_or("No parent directory")?;
-    
     let mut subtitles = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -174,7 +218,19 @@ fn scan_movies(path: String) -> Result<Vec<serde_json::Value>, String> {
     Ok(movies)
 }
 
-// === ANA BAŞLATICI ===
+#[tauri::command]
+fn start_tunnel() -> Result<String, String> {
+    let output = StdCommand::new("npx")
+        .args(&["localtunnel", "--port", "8765"])
+        .spawn();
+
+    match output {
+        Ok(_) => Ok("https://kinflix-party.loca.lt".to_string()),
+        Err(e) => Err(format!("Tünel başlatılamadı: {}", e))
+    }
+}
+
+// === 6. ANA FONKSİYON VE ROUTER BAŞLATICI ===
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -185,6 +241,8 @@ pub fn run() {
 
                 let app = Router::new()
                     .route("/video", get(stream_video))
+                    .route("/movies", get(get_catalog))
+                    .route("/subtitle", get(serve_subtitle))
                     .route("/ws", get(ws_handler))
                     .with_state(app_state)
                     .layer(CorsLayer::permissive());
@@ -203,7 +261,8 @@ pub fn run() {
             scan_movies, 
             get_local_subtitles, 
             read_text_file,
-            get_local_ip
+            get_local_ip,
+            start_tunnel
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
