@@ -11,7 +11,33 @@ import {
   initializeDatabase, getMovies, saveMovie, updateMovieMetadata, updateMovieProgress,
   getSetting, setSetting, removeLibraryFolder, removeMovie, clearDatabase, setWatchlist, type Movie,
 } from "./database";
-import MovieCard from "./components/MovieCard";
+
+const MovieCardFallback = ({ movie }: { movie: Movie }) => (
+  <div className="w-full h-full aspect-[2/3] relative group bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800 hover:border-zinc-500 transition-all duration-300 shadow-lg cursor-pointer">
+    {movie.poster_url ? (
+      <img src={movie.poster_url} alt={movie.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+    ) : (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800 p-4 text-center">
+        <span className="text-4xl mb-2 opacity-50">🎬</span>
+        <span className="text-zinc-400 text-xs font-bold uppercase tracking-widest leading-relaxed">Afiş<br/>Yok</span>
+      </div>
+    )}
+    <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-3">
+      <h3 className="text-white font-bold text-sm line-clamp-2 leading-tight mb-1">{movie.title}</h3>
+      {movie.year && <span className="text-zinc-400 text-xs font-semibold">{movie.year}</span>}
+      {movie.progress && movie.progress > 5 && (movie.is_watched || 0) === 0 && (
+        <div className="w-full h-1 bg-zinc-700 rounded-full mt-2 overflow-hidden">
+          <div className="h-full bg-red-600" style={{ width: `${Math.min((movie.progress / ((movie.runtime || 120) * 60)) * 100, 100)}%` }}></div>
+        </div>
+      )}
+    </div>
+    {movie.rating != null && movie.rating > 0 && (
+      <div className="absolute top-2 right-2 bg-black/80 text-green-400 text-[10px] font-bold px-1.5 py-0.5 rounded border border-green-900/50 backdrop-blur shadow-xl z-10">
+        {Math.round(movie.rating * 10)}%
+      </div>
+    )}
+  </div>
+);
 
 const dict = {
   tr: {
@@ -51,7 +77,8 @@ const dict = {
 type SortOption = "title_asc" | "year_desc" | "rating_desc";
 type TabState = "home" | "library" | "collections" | "watchlist";
 type Lang = "tr" | "en";
-type SubtitleTrack = { id: string; url: string; label: string; srtContent: string; offset: number; originalPath?: string };
+type ParsedCue = { start: number; end: number; text: string };
+type SubtitleTrack = { id: string; url: string; label: string; srtContent: string; offset: number; cues: ParsedCue[] };
 
 type ChatMessage = { 
   id: string; 
@@ -93,6 +120,46 @@ const generateRoomCode = () => {
 };
 
 const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
+
+const parseSrtToCues = (content: string, offsetSeconds: number = 0) => {
+  const cues: ParsedCue[] = [];
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const timeRegex = /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/;
+  
+  let currentCue: Partial<ParsedCue> = {};
+  let textLines: string[] = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith("WEBVTT")) continue; 
+    
+    if (!line) {
+      if (currentCue.start !== undefined && currentCue.end !== undefined && textLines.length > 0) {
+         currentCue.text = textLines.join('\n');
+         cues.push(currentCue as ParsedCue);
+      }
+      currentCue = {};
+      textLines = [];
+      continue;
+    }
+    
+    const match = timeRegex.exec(line);
+    if (match) {
+      const parseTime = (h:string, m:string, s:string, ms:string) => 
+        parseInt(h)*3600 + parseInt(m)*60 + parseInt(s) + parseInt(ms)/1000 + offsetSeconds;
+        
+      currentCue.start = parseTime(match[1], match[2], match[3], match[4]);
+      currentCue.end = parseTime(match[5], match[6], match[7], match[8]);
+    } else if (currentCue.start !== undefined) {
+       textLines.push(line.replace(/<[^>]+>/g, '')); 
+    }
+  }
+  if (currentCue.start !== undefined && currentCue.end !== undefined && textLines.length > 0) {
+    currentCue.text = textLines.join('\n');
+    cues.push(currentCue as ParsedCue);
+  }
+  return cues;
+};
 
 function App() {
   const [lang, setLang] = useState<Lang>("tr");
@@ -152,6 +219,15 @@ function App() {
   const localMicStreamRef = useRef<MediaStream | null>(null);
   
   const [isConverting, setIsConverting] = useState(false);
+
+  const [toast, setToast] = useState<{text: string, icon: string} | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  
+  const showToast = (text: string, icon: string = "🔔") => {
+    setToast({text, icon});
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3000);
+  };
 
   const isHostRef = useRef(!isWeb);
   const partyStatusRef = useRef<"disconnected" | "connecting" | "connected">("disconnected");
@@ -272,8 +348,8 @@ function App() {
     const handleTvRemote = (e: KeyboardEvent) => {
       if (!isPlaying || !videoRef.current || isChatOpen) return; 
       switch(e.key) {
-        case "ArrowRight": handleSeek(videoRef.current.currentTime + 10); break;
-        case "ArrowLeft": handleSeek(videoRef.current.currentTime - 10); break;
+        case "ArrowRight": handleSeek(currentTime + 10); break;
+        case "ArrowLeft": handleSeek(currentTime - 10); break;
         case "Enter": togglePlay(); break;
         case "ArrowUp":
           setVolume(v => { const newVol = Math.min(1, v + 0.1); if(videoRef.current) videoRef.current.volume = newVol; return newVol; });
@@ -285,7 +361,7 @@ function App() {
     };
     window.addEventListener("keydown", handleTvRemote);
     return () => window.removeEventListener("keydown", handleTvRemote);
-  }, [isPlaying, isChatOpen]);
+  }, [isPlaying, isChatOpen, currentTime]);
 
   useEffect(() => {
     async function loadData() {
@@ -499,34 +575,6 @@ function App() {
     }
   };
 
-  const parseSubtitle = (content: string, offsetSeconds: number = 0) => {
-    let isVtt = content.trim().startsWith("WEBVTT");
-    let vtt = "WEBVTT\n\n";
-    const lines = content.split('\n');
-    const timeRegex = /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/;
-
-    const shiftTime = (h: string, m: string, s: string, ms: string) => {
-      let totalMs = parseInt(h)*3600000 + parseInt(m)*60000 + parseInt(s)*1000 + parseInt(ms) + (offsetSeconds * 1000);
-      if (totalMs < 0) totalMs = 0;
-      const newH = Math.floor(totalMs / 3600000).toString().padStart(2, '0');
-      const newM = Math.floor((totalMs % 3600000) / 60000).toString().padStart(2, '0');
-      const newS = Math.floor((totalMs % 60000) / 1000).toString().padStart(2, '0');
-      const newMs = Math.floor(totalMs % 1000).toString().padStart(3, '0');
-      return `${newH}:${newM}:${newS}.${newMs}`; 
-    };
-
-    for (let line of lines) {
-      if (isVtt && line.startsWith("WEBVTT")) continue;
-      const match = timeRegex.exec(line);
-      if (match) {
-        const start = shiftTime(match[1], match[2], match[3], match[4]);
-        const end = shiftTime(match[5], match[6], match[7], match[8]);
-        vtt += `${start} --> ${end}\n`;
-      } else { vtt += line + '\n'; }
-    }
-    return URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
-  };
-
   const changeSubtitle = (idx: number) => {
     setActiveSubIndex(idx);
     setShowSubMenu(false);
@@ -538,9 +586,8 @@ function App() {
       const newSubs = [...prev];
       const sub = newSubs[index];
       const newOffset = sub.offset + delta;
-      URL.revokeObjectURL(sub.url);
-      const newUrl = parseSubtitle(sub.srtContent, newOffset);
-      newSubs[index] = { ...sub, offset: newOffset, url: newUrl };
+      const newCues = parseSrtToCues(sub.srtContent, newOffset);
+      newSubs[index] = { ...sub, offset: newOffset, cues: newCues };
       if (isHostRef.current && partyStatusRef.current === 'connected') { broadcastEvent("sync_subs", { subs: newSubs, activeIndex: index }); }
       return newSubs;
     });
@@ -583,9 +630,9 @@ function App() {
     try {
       const res = await fetch(sub.url);
       const content = await res.text();
-      const vttUrl = parseSubtitle(content, 0); 
+      const cues = parseSrtToCues(content, 0); 
       setLocalSubs(prev => {
-        const newSubs = [...prev, { id: `stremio_${sub.id}`, url: vttUrl, label: `🌐 ${sub.lang.toUpperCase()} - Stremio`, srtContent: content, offset: 0 }];
+        const newSubs = [...prev, { id: `stremio_${sub.id}`, url: "", label: `🌐 ${sub.lang.toUpperCase()} - Stremio`, srtContent: content, offset: 0, cues }];
         setActiveSubIndex(newSubs.length - 1);
         if (isHostRef.current && partyStatusRef.current === 'connected') { broadcastEvent("sync_subs", { subs: newSubs, activeIndex: newSubs.length - 1 }); }
         return newSubs;
@@ -676,6 +723,7 @@ function App() {
         }
       }
       else if (data.action === "request_catalog" && hostMode) {
+        showToast("Bir misafir odaya bağlandı!", "👋");
         broadcastEvent("catalog", { catalog: moviesRef.current });
         
         if (selectedMovieRef.current) {
@@ -709,6 +757,9 @@ function App() {
         setIsPlaying(true); 
         setIsRemoteStreaming(true); 
       }
+      else if (data.action === "left_movie" && hostMode) {
+        showToast("Misafir oynatıcıyı kapattı.", "🛑");
+      }
       else if (data.action === "sync_time" && !hostMode) {
         if (connModeRef.current === 'webrtc') {
           setCurrentTime(data.time);
@@ -739,7 +790,9 @@ function App() {
       }
       else if (data.action === "voice_chat_closed") { if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null; }
       else if (data.action === "sync_subs" && !hostMode) {
-        const guestSubs = data.subs.map((sub: any) => { const vttUrl = parseSubtitle(sub.srtContent, sub.offset); return { ...sub, url: vttUrl }; });
+        const guestSubs = data.subs.map((sub: any) => { 
+           return { ...sub, cues: parseSrtToCues(sub.srtContent, sub.offset) }; 
+        });
         setLocalSubs(guestSubs); setActiveSubIndex(data.activeIndex);
       }
       else if (data.action === "change_sub_index" && !hostMode) { setActiveSubIndex(data.activeIndex); }
@@ -915,6 +968,10 @@ function App() {
       setConnMode("webrtc"); connModeRef.current = "webrtc";
       connRef.current = conn; 
       
+      conn.on('close', () => {
+        if (isHostRef.current) showToast("Misafir odadan ayrıldı.", "🚪");
+      });
+
       if (!isWeb) {
         setIsHost(true); isHostRef.current = true;
         conn.on('open', () => { 
@@ -1027,7 +1084,7 @@ function App() {
           const content = await invoke<string>("read_text_file", { path });
           const fileName = path.split(/[/\\]/).pop() || `Yerel Altyazı ${i + 1}`;
           const label = `📂 ${fileName.replace(/\.srt$/i, '')}`;
-          subs.push({ id: `local_${i}`, url: parseSubtitle(content, 0), label, srtContent: content, offset: 0, originalPath: path });
+          subs.push({ id: `local_${i}`, url: "", label, srtContent: content, offset: 0, cues: parseSrtToCues(content, 0) });
         }
         setLocalSubs(subs);
         const activeIdx = subs.length > 0 ? 0 : -1;
@@ -1055,6 +1112,10 @@ function App() {
   };
 
   const closePlayer = async () => {
+    if (!isHostRef.current && partyStatusRef.current === 'connected') {
+      broadcastEvent("left_movie");
+    }
+
     if (selectedMovie && currentTime > 5 && !isRemoteStreaming && !isWeb) {
       const timeToSave = Math.floor(currentTime);
       const isCompleted = duration > 0 && (currentTime / duration) > 0.90; 
@@ -1065,7 +1126,6 @@ function App() {
       setMovies(prev => prev.map(m => m.video_path === selectedMovie.video_path ? { ...m, progress: timeToSave, is_watched: newIsWatched, watch_count: newWatchCount, updated_at: new Date().toISOString() } : m));
       setSelectedMovie(prev => prev ? { ...prev, progress: timeToSave, is_watched: newIsWatched, watch_count: newWatchCount } : null);
     }
-    localSubs.forEach(sub => URL.revokeObjectURL(sub.url));
     setLocalSubs([]); setIsPlaying(false); setCurrentTime(0);
     
     if (callRef.current) callRef.current.close();
@@ -1144,17 +1204,6 @@ function App() {
     }, 3000);
   };
 
-  useEffect(() => {
-    if (videoRef.current) {
-      setTimeout(() => {
-        if (videoRef.current) {
-          const tracks = videoRef.current.textTracks;
-          for (let i = 0; i < tracks.length; i++) { tracks[i].mode = "showing"; }
-        }
-      }, 100);
-    }
-  }, [activeSubIndex, localSubs]);
-
   const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
     const rowRef = useRef<HTMLDivElement>(null);
     if (data.length === 0) return null;
@@ -1176,7 +1225,7 @@ function App() {
         <div ref={rowRef} className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {data.map(movie => (
             <div key={movie.video_path} className="w-40 flex-shrink-0 snap-start sm:w-48 xl:w-56" onClick={() => handleMovieClick(movie)}>
-              <MovieCard movie={movie} />
+              <MovieCardFallback movie={movie} />
             </div>
           ))}
         </div>
@@ -1200,6 +1249,13 @@ function App() {
   return (
     <div className="min-h-screen bg-[#0b0b0b] text-white relative flex flex-col overflow-hidden">
       
+      {toast && (
+        <div className="fixed top-8 right-8 z-[9999] flex items-center gap-3 bg-zinc-900 border border-zinc-700 text-white px-6 py-4 rounded-xl shadow-2xl animate-in slide-in-from-right-10 fade-in duration-300">
+          <span className="text-2xl">{toast.icon}</span>
+          <span className="font-bold">{toast.text}</span>
+        </div>
+      )}
+
       <audio ref={remoteAudioRef} autoPlay />
 
       {updateInfo && !isWeb && (
@@ -1375,6 +1431,109 @@ function App() {
         </div>
       )}
 
+      {/* YENİDEN EKLENDİ: Ayarlar Modalı */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-zinc-900 p-8 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="text-3xl font-bold">⚙️ {t.settings}</h2>
+              <button onClick={() => setIsSettingsOpen(false)} className="text-3xl text-zinc-500 hover:text-white">✕</button>
+            </div>
+            
+            <div className="mb-6 flex items-center gap-4 border-b border-zinc-800 pb-6">
+              <h3 className="text-sm font-semibold text-zinc-400">{t.language}:</h3>
+              <select value={lang} onChange={(e) => handleSaveLang(e.target.value as Lang)} className="w-48 rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-2 text-white outline-none">
+                <option value="tr">Türkçe</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+
+            {(!isHost && partyStatus === 'connected') || isWeb || isTV ? (
+              <div className="text-center py-6">
+                <h3 className="text-2xl font-bold text-white mb-4">Misafir Modundasınız 🎭</h3>
+                <p className="text-zinc-400 leading-relaxed max-w-md mx-auto">Oda kurucusunun (Host) kütüphanesini görüntülüyorsunuz. Bütün film verileri doğrudan Host'tan size aktarılıyor.<br/><br/>Arkanıza yaslanın ve filmin tadını çıkarın!</p>
+                
+                <div className="mt-8 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 max-w-xs mx-auto">
+                  <h3 className="text-blue-500 font-bold mb-2">Sistem Durumu</h3>
+                  <p className="text-sm text-zinc-300">Web arayüzü Vercel/Netlify tarafından otomatik güncellenir.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div>
+                  <h3 className="mb-2 text-sm font-semibold text-zinc-400">{t.apiToken}</h3>
+                  <input type="password" value={tmdbToken} onChange={(e) => handleSaveToken(e.target.value)} placeholder="TMDB Read Access Token" className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none" />
+                </div>
+                <div>
+                  <div className="mb-2 flex items-center justify-between"><h3 className="text-lg font-semibold text-zinc-300">{t.libCount} ({libraries.length})</h3><button onClick={chooseFolder} disabled={scanning} className="text-sm font-bold text-red-500 hover:text-red-400">{t.addLib}</button></div>
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+                    {libraries.length === 0 ? <p className="p-2 text-sm text-zinc-500">Yok</p> : libraries.map(lib => (
+                      <div key={lib} className="flex items-center justify-between rounded p-2 hover:bg-zinc-800"><span className="truncate text-sm text-zinc-300">{lib}</span><button onClick={async () => { await removeLibraryFolder(lib); setMovies(await getMovies()); }} className="ml-4 text-xs font-bold text-red-500">{t.remove}</button></div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mb-6 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4">
+                  <h3 className="text-blue-500 font-bold mb-2">Masaüstü Güncellemeleri</h3>
+                  <button onClick={forceUpdateCheck} className="rounded bg-blue-600 px-4 py-2 text-sm font-bold transition hover:bg-blue-700 text-white">
+                    Sürüm Kontrolü Yap
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-4"><h3 className="text-red-500 font-bold mb-2">{t.dangerZone}</h3><button onClick={async () => { if(confirm("Emin misin?")) { await clearDatabase(); setMovies([]); setIsSettingsOpen(false); } }} className="rounded bg-red-600 px-4 py-2 text-sm font-bold transition hover:bg-red-700">{t.resetDb}</button></div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* YENİDEN EKLENDİ: Film Detayları Modalı */}
+      {selectedMovie && !isPlaying && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-[#0b0b0b] animate-in fade-in zoom-in-95 duration-200">
+          <button onClick={() => setSelectedMovie(null)} className="absolute left-8 top-8 z-[60] flex h-12 w-12 items-center justify-center rounded-full bg-black/50 text-2xl text-white backdrop-blur-md transition hover:scale-110 hover:bg-white/20 shadow-2xl">✕</button>
+          <div className="relative h-[65vh] w-full">{selectedMovie.backdrop_url ? <img src={selectedMovie.backdrop_url} className="h-full w-full object-cover" /> : <div className="h-full w-full bg-zinc-900" />}<div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0b] via-[#0b0b0b]/60 to-transparent" /></div>
+          <div className="relative z-10 -mt-56 max-w-5xl px-10 pb-20">
+            <h1 className="text-5xl font-extrabold shadow-black drop-shadow-2xl md:text-7xl">{selectedMovie.title}</h1>
+            <div className="mt-6 flex flex-wrap items-center gap-4 text-sm font-semibold text-zinc-300">
+              {selectedMovie.rating != null && selectedMovie.rating > 0 && <span className="flex items-center gap-1 text-green-400 font-bold text-base">{Math.round(selectedMovie.rating * 10)}% Eşleşme</span>}
+              {selectedMovie.year && <span>{selectedMovie.year}</span>}
+              {selectedMovie.runtime && <span>{selectedMovie.runtime} dk</span>}
+              <span className="rounded border border-zinc-500 px-1.5 py-0.5 text-xs text-zinc-300">HD</span>
+            </div>
+            {selectedMovie.progress && selectedMovie.progress > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb && <div className="mt-4 flex items-center gap-3"><div className="h-1.5 w-64 rounded-full bg-zinc-800"><div className="h-full rounded-full bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{ width: `${Math.min((selectedMovie.progress / ((selectedMovie.runtime || 120) * 60)) * 100, 100)}%` }} /></div></div>}
+            
+            <div className="mt-8 flex flex-wrap gap-4">
+              <button onClick={() => startPlayer()} className="flex items-center justify-center gap-2 rounded bg-white px-8 py-3 text-xl font-bold text-black transition hover:bg-zinc-200">
+                <span className="text-2xl">▶</span> {selectedMovie.progress && (selectedMovie.is_watched || 0) === 0 && !isWeb ? t.resume : t.play}
+              </button>
+              {!isWeb && <button onClick={() => toggleWatchlist(selectedMovie)} className="flex items-center justify-center gap-2 rounded bg-zinc-800/80 backdrop-blur px-8 py-3 text-xl font-bold text-white transition hover:bg-zinc-700">{selectedMovie.watchlist ? "✓ " + t.inWatchlist : "+ " + t.toWatch}</button>}
+              
+              {!isWeb && isHost && (
+                <button disabled={isConverting} onClick={convertToX264} className={`flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border ${isConverting ? 'bg-blue-600/50 border-blue-500 cursor-not-allowed' : 'bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/40 hover:border-blue-400'}`}>
+                  {isConverting ? "⏳ Çevriliyor..." : "🔄 Web İçin Optimize Et (x264)"}
+                </button>
+              )}
+            </div>
+
+            <div className="mt-10 flex flex-col md:flex-row gap-10">
+              <div className="flex-[2]"><p className="text-lg leading-relaxed text-zinc-300">{selectedMovie.overview || t.noOverview}</p></div>
+              <div className="flex-1 flex flex-col gap-3 text-sm">
+                {selectedMovie.genres && <p><span className="text-zinc-500">Türler:</span> <span className="text-zinc-300">{selectedMovie.genres}</span></p>}
+                {selectedMovie.director && <p><span className="text-zinc-500">Yönetmen:</span> <span className="text-zinc-300">{selectedMovie.director}</span></p>}
+                {selectedMovie.actors && <p><span className="text-zinc-500">Oyuncular:</span> <span className="text-zinc-300">{selectedMovie.actors}</span></p>}
+                {selectedMovie.collection_name && <p><span className="text-zinc-500">Seri:</span> <span className="text-zinc-300">{selectedMovie.collection_name}</span></p>}
+              </div>
+            </div>
+            
+            {similarMovies.length > 0 && (
+              <div className="mt-16">
+                <MovieRow title={t.similar} data={similarMovies} />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {isStatsOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4 animate-in fade-in zoom-in-95">
           <div className="w-full max-w-lg rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 relative overflow-hidden">
@@ -1471,14 +1630,6 @@ function App() {
           onClick={() => {if(showSubMenu) setShowSubMenu(false); if(showSpeedMenu) setShowSpeedMenu(false);}} 
           className={`fixed inset-0 z-[100] bg-black flex flex-col group ${showControls ? "controls-visible" : "controls-hidden"}`}
         >
-          <style>
-            {`
-              video::cue { background-color: transparent !important; color: #ffffff; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 2.3vw; font-weight: bold; text-shadow: 0px 0px 7px rgba(0,0,0, 1), 0px 0px 7px rgba(0,0,0, 1), 2px 2px 3px rgba(0,0,0, 0.9), -1px -1px 0px rgba(0,0,0, 0.5), 1px -1px 0px rgba(0,0,0, 0.5); }
-              .controls-visible video::-webkit-media-text-track-display { transform: translateY(-90px) !important; transition: transform 0.3s ease-in-out; }
-              .controls-hidden video::-webkit-media-text-track-display { transform: translateY(-15px) !important; transition: transform 0.3s ease-in-out; }
-            `}
-          </style>
-
           <video
             ref={videoRef} 
             crossOrigin="anonymous" 
@@ -1509,22 +1660,23 @@ function App() {
               }
             }}
             className="h-full w-full object-contain cursor-pointer"
-          >
-            {activeSubIndex >= 0 && localSubs[activeSubIndex] && (
-              <track 
-                key={localSubs[activeSubIndex].url} 
-                src={localSubs[activeSubIndex].url} 
-                kind="subtitles" 
-                srcLang={localSubs[activeSubIndex].label.includes("Türkçe") ? "tr" : "en"} 
-                label={localSubs[activeSubIndex].label} 
-                default 
-                onLoad={(e) => {
-                  const trk = (e.currentTarget as HTMLTrackElement).track;
-                  if (trk) trk.mode = "showing";
-                }}
-              />
-            )}
-          </video>
+          />
+
+          {/* Kendi Altyazı Motorumuz */}
+          {activeSubIndex >= 0 && localSubs[activeSubIndex] && (
+            <div className={`absolute left-0 right-0 z-[110] flex flex-col items-center justify-end pointer-events-none transition-all duration-300 ${showControls ? 'bottom-32' : 'bottom-12'}`}>
+              {localSubs[activeSubIndex].cues
+                .filter(c => currentTime >= c.start && currentTime <= c.end)
+                .map((c, i) => (
+                  <div key={i} className="text-center bg-black/60 px-4 py-1.5 rounded-lg mb-1" style={{ textShadow: '0px 0px 4px black, 0px 0px 8px black' }}>
+                    {c.text.split('\n').map((line, j) => (
+                      <p key={j} className="text-white font-bold leading-tight" style={{ fontSize: '2.4vw' }}>{line}</p>
+                    ))}
+                  </div>
+                ))
+              }
+            </div>
+          )}
 
           {isRemoteStreaming && connMode === 'webrtc' && !remoteStream && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-none">
@@ -1647,108 +1799,6 @@ function App() {
         </div>
       )}
 
-      {isSettingsOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-zinc-900 p-8 shadow-2xl">
-            <div className="mb-6 flex items-center justify-between">
-              <h2 className="text-3xl font-bold">⚙️ {t.settings}</h2>
-              <button onClick={() => setIsSettingsOpen(false)} className="text-3xl text-zinc-500 hover:text-white">✕</button>
-            </div>
-            
-            <div className="mb-6 flex items-center gap-4 border-b border-zinc-800 pb-6">
-              <h3 className="text-sm font-semibold text-zinc-400">{t.language}:</h3>
-              <select value={lang} onChange={(e) => handleSaveLang(e.target.value as Lang)} className="w-48 rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-2 text-white outline-none">
-                <option value="tr">Türkçe</option>
-                <option value="en">English</option>
-              </select>
-            </div>
-
-            {(!isHost && partyStatus === 'connected') || isWeb || isTV ? (
-              <div className="text-center py-6">
-                <h3 className="text-2xl font-bold text-white mb-4">Misafir Modundasınız 🎭</h3>
-                <p className="text-zinc-400 leading-relaxed max-w-md mx-auto">Oda kurucusunun (Host) kütüphanesini görüntülüyorsunuz. Bütün film verileri doğrudan Host'tan size aktarılıyor.<br/><br/>Arkanıza yaslanın ve filmin tadını çıkarın!</p>
-                
-                <div className="mt-8 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 max-w-xs mx-auto">
-                  <h3 className="text-blue-500 font-bold mb-2">Sistem Durumu</h3>
-                  <p className="text-sm text-zinc-300">Web arayüzü Vercel tarafından otomatik güncellenir.</p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="mb-2 text-sm font-semibold text-zinc-400">{t.apiToken}</h3>
-                  <input type="password" value={tmdbToken} onChange={(e) => handleSaveToken(e.target.value)} placeholder="TMDB Read Access Token" className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none" />
-                </div>
-                <div>
-                  <div className="mb-2 flex items-center justify-between"><h3 className="text-lg font-semibold text-zinc-300">{t.libCount} ({libraries.length})</h3><button onClick={chooseFolder} disabled={scanning} className="text-sm font-bold text-red-500 hover:text-red-400">{t.addLib}</button></div>
-                  <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950 p-2">
-                    {libraries.length === 0 ? <p className="p-2 text-sm text-zinc-500">Yok</p> : libraries.map(lib => (
-                      <div key={lib} className="flex items-center justify-between rounded p-2 hover:bg-zinc-800"><span className="truncate text-sm text-zinc-300">{lib}</span><button onClick={async () => { await removeLibraryFolder(lib); setMovies(await getMovies()); }} className="ml-4 text-xs font-bold text-red-500">{t.remove}</button></div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mb-6 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4">
-                  <h3 className="text-blue-500 font-bold mb-2">Masaüstü Güncellemeleri</h3>
-                  <button onClick={forceUpdateCheck} className="rounded bg-blue-600 px-4 py-2 text-sm font-bold transition hover:bg-blue-700 text-white">
-                    Sürüm Kontrolü Yap
-                  </button>
-                </div>
-
-                <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-4"><h3 className="text-red-500 font-bold mb-2">{t.dangerZone}</h3><button onClick={async () => { if(confirm("Emin misin?")) { await clearDatabase(); setMovies([]); setIsSettingsOpen(false); } }} className="rounded bg-red-600 px-4 py-2 text-sm font-bold transition hover:bg-red-700">{t.resetDb}</button></div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {selectedMovie && !isPlaying && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-[#0b0b0b] animate-in fade-in zoom-in-95 duration-200">
-          <button onClick={() => setSelectedMovie(null)} className="absolute left-8 top-8 z-[60] flex h-12 w-12 items-center justify-center rounded-full bg-black/50 text-2xl text-white backdrop-blur-md transition hover:scale-110 hover:bg-white/20 shadow-2xl">✕</button>
-          <div className="relative h-[65vh] w-full">{selectedMovie.backdrop_url ? <img src={selectedMovie.backdrop_url} className="h-full w-full object-cover" /> : <div className="h-full w-full bg-zinc-900" />}<div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0b] via-[#0b0b0b]/60 to-transparent" /></div>
-          <div className="relative z-10 -mt-56 max-w-5xl px-10 pb-20">
-            <h1 className="text-5xl font-extrabold shadow-black drop-shadow-2xl md:text-7xl">{selectedMovie.title}</h1>
-            <div className="mt-6 flex flex-wrap items-center gap-4 text-sm font-semibold text-zinc-300">
-              {selectedMovie.rating != null && selectedMovie.rating > 0 && <span className="flex items-center gap-1 text-green-400 font-bold text-base">{Math.round(selectedMovie.rating * 10)}% Eşleşme</span>}
-              {selectedMovie.year && <span>{selectedMovie.year}</span>}
-              {selectedMovie.runtime && <span>{selectedMovie.runtime} dk</span>}
-              <span className="rounded border border-zinc-500 px-1.5 py-0.5 text-xs text-zinc-300">HD</span>
-            </div>
-            {selectedMovie.progress && selectedMovie.progress > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb && <div className="mt-4 flex items-center gap-3"><div className="h-1.5 w-64 rounded-full bg-zinc-800"><div className="h-full rounded-full bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{ width: `${Math.min((selectedMovie.progress / ((selectedMovie.runtime || 120) * 60)) * 100, 100)}%` }} /></div></div>}
-            
-            <div className="mt-8 flex flex-wrap gap-4">
-              <button onClick={() => startPlayer()} className="flex items-center justify-center gap-2 rounded bg-white px-8 py-3 text-xl font-bold text-black transition hover:bg-zinc-200">
-                <span className="text-2xl">▶</span> {selectedMovie.progress && (selectedMovie.is_watched || 0) === 0 && !isWeb ? t.resume : t.play}
-              </button>
-              {!isWeb && <button onClick={() => toggleWatchlist(selectedMovie)} className="flex items-center justify-center gap-2 rounded bg-zinc-800/80 backdrop-blur px-8 py-3 text-xl font-bold text-white transition hover:bg-zinc-700">{selectedMovie.watchlist ? "✓ " + t.inWatchlist : "+ " + t.toWatch}</button>}
-              
-              {!isWeb && isHost && (
-                <button disabled={isConverting} onClick={convertToX264} className={`flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border ${isConverting ? 'bg-blue-600/50 border-blue-500 cursor-not-allowed' : 'bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/40 hover:border-blue-400'}`}>
-                  {isConverting ? "⏳ Çevriliyor..." : "🔄 Web İçin Optimize Et (x264)"}
-                </button>
-              )}
-            </div>
-
-            <div className="mt-10 flex flex-col md:flex-row gap-10">
-              <div className="flex-[2]"><p className="text-lg leading-relaxed text-zinc-300">{selectedMovie.overview || t.noOverview}</p></div>
-              <div className="flex-1 flex flex-col gap-3 text-sm">
-                {selectedMovie.genres && <p><span className="text-zinc-500">Türler:</span> <span className="text-zinc-300">{selectedMovie.genres}</span></p>}
-                {selectedMovie.director && <p><span className="text-zinc-500">Yönetmen:</span> <span className="text-zinc-300">{selectedMovie.director}</span></p>}
-                {selectedMovie.actors && <p><span className="text-zinc-500">Oyuncular:</span> <span className="text-zinc-300">{selectedMovie.actors}</span></p>}
-                {selectedMovie.collection_name && <p><span className="text-zinc-500">Seri:</span> <span className="text-zinc-300">{selectedMovie.collection_name}</span></p>}
-              </div>
-            </div>
-            
-            {similarMovies.length > 0 && (
-              <div className="mt-16">
-                <MovieRow title={t.similar} data={similarMovies} />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* YENİ: Web ve TV misafirlerine kütüphaneyi başarıyla açan kırılmaz render koşulu */}
       {(partyStatus === 'connected' || (!isWeb && !isTV)) && (
         <main className="flex-1 pb-10">
           {error && <div className="mx-10 mb-6 rounded-xl border border-red-900 bg-red-950/30 p-4 text-red-400">Hata: {error}</div>}
@@ -1798,7 +1848,7 @@ function App() {
                 <div className="animate-in fade-in duration-500 px-10 pt-4">
                   <h2 className="mb-6 text-2xl font-bold">{t.watchlist}</h2>
                   {watchListMovies.length === 0 ? <div className="text-zinc-500">{t.emptyWatchlist}</div> : (
-                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">{watchListMovies.map((movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCard movie={movie} /></div>)}</div>
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">{watchListMovies.map((movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}</div>
                   )}
                 </div>
               )}
@@ -1811,7 +1861,7 @@ function App() {
                       <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)} className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none transition focus:border-white"><option value="title_asc">{t.sortAZ}</option><option value="year_desc">{t.sortNew}</option><option value="rating_desc">{t.sortRating}</option></select>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">{libraryMovies.map((movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCard movie={movie} /></div>)}</div>
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">{libraryMovies.map((movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}</div>
                 </div>
               )}
             </>
