@@ -130,7 +130,7 @@ function App() {
   const [peerId, setPeerId] = useState<string>(""); 
   const [localIp, setLocalIp] = useState<string>(""); 
   const [targetAddress, setTargetAddress] = useState(""); 
-  const [partyStatus, setPartyStatus] = useState<"disconnected" | "connected">("disconnected");
+  const [partyStatus, setPartyStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [connMode, setConnMode] = useState<"none" | "webrtc" | "ip">("none");
   
   const [isHost, setIsHost] = useState(!isWeb); 
@@ -143,7 +143,7 @@ function App() {
   const [isConverting, setIsConverting] = useState(false);
 
   const isHostRef = useRef(!isWeb);
-  const partyStatusRef = useRef<"disconnected" | "connected">("disconnected");
+  const partyStatusRef = useRef<"disconnected" | "connecting" | "connected">("disconnected");
   const connModeRef = useRef<"none" | "webrtc" | "ip">("none");
   const targetAddressRef = useRef("");
   const localIpRef = useRef("");
@@ -151,7 +151,6 @@ function App() {
   const moviesRef = useRef<Movie[]>([]);
   useEffect(() => { moviesRef.current = movies; }, [movies]);
 
-  // YENİ: Anlık oynatılan filmi referans olarak tutuyoruz ki refresh atana yollayalım
   const selectedMovieRef = useRef<Movie | null>(null);
   useEffect(() => { selectedMovieRef.current = selectedMovie; }, [selectedMovie]);
 
@@ -296,9 +295,7 @@ function App() {
       } else {
         const savedLang = localStorage.getItem("kinflix_language");
         if (savedLang) setLang(savedLang as Lang);
-        initPeerHost();
         
-        // YENİ: OTURUM HAFIZASI VE OTOMATİK BAĞLANMA (F5 Koruması)
         const params = new URLSearchParams(window.location.search);
         const roomCode = params.get('room');
         if (roomCode) {
@@ -308,7 +305,7 @@ function App() {
           const sessionStr = localStorage.getItem("kinflix_last_session");
           if (sessionStr) {
             const { target, time } = JSON.parse(sessionStr);
-            if (Date.now() - time < 1000 * 60 * 60 * 3) { // 3 saatlik oturum ömrü
+            if (Date.now() - time < 1000 * 60 * 60 * 3) {
               console.log("Kinflix: Eski oturum kurtarılıyor...", target);
               setTargetAddress(target);
               connectParty(target);
@@ -339,14 +336,14 @@ function App() {
     try {
       const { check } = await import('@tauri-apps/plugin-updater');
       const update = await check();
-      if (update?.available) {
+      if (update && update.available) {
         setUpdateInfo(update);
         alert("🎉 Yeni güncelleme bulundu: v" + update.version);
       } else {
-        alert("✅ Uygulamanız güncel veya sürüm eşleşmiyor.");
+        alert("✅ Uygulamanız güncel veya yeni sürüm eşleşmiyor.");
       }
     } catch (e) {
-      alert("❌ GÜNCELLEME HATASI: " + e);
+      alert("❌ GÜNCELLEME SİSTEMİ HATASI:\n" + String(e));
     }
   };
 
@@ -366,6 +363,26 @@ function App() {
     else localStorage.setItem("kinflix_language", val); 
   };
   const handleSaveToken = async (val: string) => { setTmdbToken(val); if(!isWeb) await setSetting("tmdb_token", val); };
+
+  const disconnectParty = () => {
+    if (connRef.current) { connRef.current.close(); connRef.current = null; }
+    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+    if (peerRef.current) { peerRef.current.destroy(); peerRef.current = null; }
+    
+    localStorage.removeItem("kinflix_last_session");
+    setPartyStatus("disconnected");
+    setConnMode("none");
+    setIsPartyMenuOpen(false);
+    
+    if (isWeb || isTV) {
+      setMovies([]);
+      setSelectedMovie(null);
+      setIsPlaying(false);
+      setTargetAddress("");
+    } else {
+      initPeerHost(); 
+    }
+  };
 
   async function chooseFolder() {
     if (isWeb) return;
@@ -426,7 +443,7 @@ function App() {
     setSelectedMovie(randomMovie);
   };
 
- // YENİ: x264 ÇEVİRİ FONKSİYONU
+  // YENİ: x264 Dönüştürücü (Artık Tüm Desktop Kullanıcılarına Açık)
   const convertToX264 = async () => {
     if (!selectedMovie || isWeb) return;
     setIsConverting(true);
@@ -434,7 +451,6 @@ function App() {
       const { invoke } = await import("@tauri-apps/api/core");
       alert("Dönüştürme başladı. Bu işlem bilgisayarının hızına göre 10-20 dakika sürebilir. Arka planda devam ediyor.");
       const newPath = await invoke<string>("convert_to_x264", { videoPath: selectedMovie.video_path });
-      // newPath'i burada kullanarak TypeScript'in uyarısını susturuyoruz
       alert(`✅ Çeviri Tamamlandı!\nYeni Dosya: ${newPath}\nKütüphaneyi yeniden tara (Klasör ekler gibi aynı klasörü tekrar seç).`);
     } catch (err) {
       alert("❌ Hata: " + err);
@@ -622,7 +638,6 @@ function App() {
       else if (data.action === "request_catalog" && hostMode) {
         broadcastEvent("catalog", { catalog: moviesRef.current });
         
-        // YENİ: REFRESH ATANI SONRADAN EŞİTLEME ZEKASI (LATE-JOIN SYNC)
         if (selectedMovieRef.current) {
            console.log("Yeni misafir geldi, oynatılan filme eşitleniyor...");
            broadcastEvent("load", { movie: selectedMovieRef.current });
@@ -631,7 +646,7 @@ function App() {
                  broadcastEvent("seek", { time: videoRef.current.currentTime });
                  broadcastEvent(videoRef.current.paused ? "pause" : "play", { time: videoRef.current.currentTime });
               }
-           }, 800); // Misafirin oynatıcıyı açması için 800ms süre tanı
+           }, 800); 
         }
       }
       else if (data.action === "catalog" && !hostMode) {
@@ -682,7 +697,8 @@ function App() {
   });
 
   const connectParty = (target: string) => {
-    // YENİ: Bağlanılan odayı 3 saatliğine hafızaya al
+    setPartyStatus("connecting");
+    
     if (!isHostRef.current) {
       localStorage.setItem("kinflix_last_session", JSON.stringify({ target, time: Date.now() }));
     }
@@ -690,7 +706,8 @@ function App() {
     setChatMessages([]);
     localStorage.removeItem("kinflix_chat_history");
 
-    if (!target) return;
+    if (!target) { setPartyStatus("disconnected"); return; }
+    
     const isIp = target.includes(".") || target.startsWith("http") || target === "localhost";
     
     if (!isIp && target.length === 6) {
@@ -730,9 +747,12 @@ function App() {
       setTimeout(() => {
         if (connRef.current?.open) {
           connRef.current.send({ action: "request_catalog" });
+          setTimeout(() => connRef.current?.send({ action: "request_catalog" }), 2000);
         }
       }, 500);
     });
+    
+    conn.on('error', () => { setPartyStatus("disconnected"); });
     
     conn.on('data', (data) => {
       if (networkHandlerRef.current) networkHandlerRef.current(data);
@@ -771,13 +791,14 @@ function App() {
       }, 500);
     };
     
+    ws.onerror = () => { setPartyStatus("disconnected"); };
     ws.onmessage = (e) => { 
       try { 
         const data = JSON.parse(e.data); 
         if (networkHandlerRef.current) networkHandlerRef.current(data); 
       } catch(err) {} 
     };
-    ws.onclose = () => setPartyStatus("disconnected");
+    ws.onclose = () => { if (partyStatusRef.current !== 'disconnected') setPartyStatus("disconnected"); };
     wsRef.current = ws;
   };
 
@@ -838,15 +859,29 @@ function App() {
     if (!isWeb) { import("@tauri-apps/api/core").then(({ convertFileSrc }) => setTauriConvertFileSrc(() => convertFileSrc)); }
   }, []);
 
+  // YENİ: WINDOWS-TO-WINDOWS SİYAH EKRAN ÇÖZÜMÜ
   const getSafeVideoSource = () => {
     if (!selectedMovie) return ""; 
+    
+    // 1. Misafir: Eğer Ağ üzerinden (IP/HTTP) bağlanıyorsa
     if (isRemoteStreaming && connModeRef.current === 'ip') {
       const baseUrl = targetAddressRef.current.startsWith("http") ? targetAddressRef.current : `http://${targetAddressRef.current}:8765`;
       return `${baseUrl}/video?path=${encodeURIComponent(selectedMovie.video_path)}&quality=720p`;
     }
+    
+    // 2. Misafir: Eğer WebRTC (4-haneli kod) ile bağlanıyorsa kaynak srcObject (Stream) üzerinden gelir.
     if (isRemoteStreaming && connModeRef.current === 'webrtc') return "";
-    if (isWeb || !tauriConvertFileSrc) return "";
-    return tauriConvertFileSrc(selectedMovie.video_path);
+    
+    if (isWeb) return "";
+
+    // 3. HOST: Eğer Host WebRTC odasındaysa, Tauri protokolü güvenliği nedeniyle captureStream() SİYAH verir.
+    // Bunu aşmak için yayın esnasında Host'un kendisi de kendi Axum sunucusundan çeker!
+    if (partyStatusRef.current === 'connected' && connModeRef.current === 'webrtc') {
+      return `http://127.0.0.1:8765/video?path=${encodeURIComponent(selectedMovie.video_path)}`;
+    }
+
+    // 4. HOST: Sadece kendi izliyorsa kusursuz yerel Tauri protokolünü kullanır.
+    return tauriConvertFileSrc ? tauriConvertFileSrc(selectedMovie.video_path) : "";
   };
 
   useEffect(() => {
@@ -1062,7 +1097,14 @@ function App() {
         </div>
       )}
 
-      {isWeb && !isTV && partyStatus !== 'connected' && (
+      {isWeb && !isTV && partyStatus === 'connecting' && (
+        <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
+          <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
+          <h1 className="text-3xl font-bold text-white animate-pulse">Odaya Bağlanılıyor...</h1>
+        </div>
+      )}
+
+      {isWeb && !isTV && partyStatus === 'disconnected' && (
         <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
           <h1 className="text-6xl font-extrabold tracking-tight mb-8">KIN<span className="text-red-600">FLIX</span> <span className="text-2xl text-zinc-500">WEB</span></h1>
           <p className="text-zinc-400 mb-8 max-w-md">Arkadaşının bilgisayarına doğrudan bağlanıp birlikte film izlemek için oda kodunu gir.</p>
@@ -1079,7 +1121,7 @@ function App() {
         </div>
       )}
 
-      {isTV && partyStatus !== 'connected' && (
+      {isTV && partyStatus === 'disconnected' && (
         <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
           <h1 className="text-6xl font-extrabold tracking-tight mb-8">KIN<span className="text-red-600">FLIX</span> <span className="text-2xl text-zinc-500">TV</span></h1>
           <p className="text-zinc-400 mb-8 max-w-md">Televizyon kumandası ile oda kodunu veya kısa IP kodunu girip bağlan.</p>
@@ -1123,8 +1165,7 @@ function App() {
         </div>
       </header>
 
-      {/* HOST MENÜSÜ */}
-      {isPartyMenuOpen && !isWeb && (
+      {isPartyMenuOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
           <div className="w-full max-w-3xl rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 flex gap-8">
             <div className="flex-1 space-y-4">
@@ -1132,41 +1173,69 @@ function App() {
                 <h2 className="text-3xl font-bold">🎉 {t.party}</h2>
               </div>
               
-              <div className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-4 text-center">
-                <h3 className="mb-2 text-sm font-semibold text-zinc-400">İnternet Kodu (Otomatik):</h3>
-                <div className="bg-black rounded-lg p-2 text-4xl font-black tracking-widest text-green-400 border border-zinc-800">
-                  {peerId || "..."}
-                </div>
-                
-                <h3 className="mt-4 mb-2 text-sm font-semibold text-zinc-400">Yerel IP (Aynı Ev / Wi-Fi İçin):</h3>
-                <div className="bg-black rounded-lg p-2 text-xl font-mono tracking-widest text-blue-400 border border-zinc-800 flex justify-between items-center px-4">
-                  <span>{localIp || "Yükleniyor..."}</span>
-                  {generateLocalShortCode(localIp) && (
-                    <span className="text-sm bg-blue-900/30 text-blue-300 px-3 py-1 rounded border border-blue-800/50 flex flex-col items-center">
-                      <span className="text-[10px] uppercase tracking-wider text-blue-500 font-bold mb-0.5">TV Kısa Kodu</span>
-                      <span>{generateLocalShortCode(localIp)}</span>
-                    </span>
-                  )}
-                </div>
-              </div>
+              {!isWeb && isHost ? (
+                <>
+                  <div className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-4 text-center">
+                    <h3 className="mb-2 text-sm font-semibold text-zinc-400">İnternet Kodu (Otomatik):</h3>
+                    <div className="bg-black rounded-lg p-2 text-4xl font-black tracking-widest text-green-400 border border-zinc-800">
+                      {peerId || "..."}
+                    </div>
+                    
+                    <h3 className="mt-4 mb-2 text-sm font-semibold text-zinc-400">Yerel IP (Aynı Ev / Wi-Fi İçin):</h3>
+                    <div className="bg-black rounded-lg p-2 text-xl font-mono tracking-widest text-blue-400 border border-zinc-800 flex justify-between items-center px-4">
+                      <span>{localIp || "Yükleniyor..."}</span>
+                      {generateLocalShortCode(localIp) && (
+                        <span className="text-sm bg-blue-900/30 text-blue-300 px-3 py-1 rounded border border-blue-800/50 flex flex-col items-center">
+                          <span className="text-[10px] uppercase tracking-wider text-blue-500 font-bold mb-0.5">TV Kısa Kodu</span>
+                          <span>{generateLocalShortCode(localIp)}</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
-              <div>
-                <h3 className="mb-2 text-sm font-semibold text-zinc-400">Arkadaşının Kodunu Gir:</h3>
-                <div className="flex gap-2">
-                  <input type="text" placeholder="Örn: 5842 veya 900261" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} className="flex-1 rounded-lg border border-zinc-700 bg-black px-4 py-2 text-white outline-none focus:border-zinc-500 transition font-mono" />
-                  <button onClick={() => connectParty(targetAddress)} className="rounded-lg bg-red-600 px-6 font-bold hover:bg-red-700 transition">{t.connect}</button>
+                  <div>
+                    <h3 className="mb-2 text-sm font-semibold text-zinc-400">Arkadaşının Kodunu Gir:</h3>
+                    <div className="flex gap-2">
+                      <input type="text" placeholder="Örn: 5842 veya 900261" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} className="flex-1 rounded-lg border border-zinc-700 bg-black px-4 py-2 text-white outline-none focus:border-zinc-500 transition font-mono" />
+                      <button onClick={() => connectParty(targetAddress)} className="rounded-lg bg-red-600 px-6 font-bold hover:bg-red-700 transition">{t.connect}</button>
+                    </div>
+                  </div>
+                  
+                  {partyStatus === 'connected' && (
+                     <button onClick={disconnectParty} className="mt-4 w-full rounded bg-red-600/20 py-3 text-red-500 font-bold hover:bg-red-600/40 border border-red-900/50 transition">
+                       Ağı Kapat ve Odadan Ayrıl
+                     </button>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-6">
+                   <h3 className="text-2xl font-bold text-green-400 mb-2">Başarıyla Bağlandınız!</h3>
+                   <p className="text-zinc-400 mb-8">Şu anda oda kurucusunun (Host) kütüphanesini görüntülüyorsunuz.</p>
+                   
+                   <button onClick={() => broadcastEvent("request_catalog")} className="w-full rounded bg-blue-600/20 py-3 text-blue-400 font-bold hover:bg-blue-600/40 border border-blue-900/50 transition mb-4">
+                     🔄 Kataloğu Senkronize Et (Eğer Boşsa Tıkla)
+                   </button>
+                   
+                   <button onClick={disconnectParty} className="w-full rounded bg-red-600/20 py-3 text-red-500 font-bold hover:bg-red-600/40 border border-red-900/50 transition">
+                     Odadan Ayrıl / Bağlantıyı Kes
+                   </button>
                 </div>
-              </div>
+              )}
             </div>
             
-            <div className="w-48 flex flex-col items-center justify-center border-l border-zinc-800 pl-8">
-               <h3 className="text-sm font-bold text-zinc-400 mb-4 text-center">Telefondan Katıl</h3>
-               <div className="bg-white p-2 rounded-xl">
-                 <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent('https://kinflix.vercel.app/?room=' + peerId)}`} alt="Kinflix QR" className="w-32 h-32" />
-               </div>
-               <p className="text-xs text-zinc-500 mt-4 text-center">Kameranı okutarak anında odaya gir.</p>
-               <button onClick={() => setIsPartyMenuOpen(false)} className="mt-8 text-zinc-500 hover:text-white font-bold">Kapat ✕</button>
-            </div>
+            {!isWeb && isHost && (
+              <div className="w-48 flex flex-col items-center justify-center border-l border-zinc-800 pl-8">
+                 <h3 className="text-sm font-bold text-zinc-400 mb-4 text-center">Telefondan Katıl</h3>
+                 <div className="bg-white p-2 rounded-xl">
+                   <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent('https://kinflix.vercel.app/?room=' + peerId)}`} alt="Kinflix QR" className="w-32 h-32" />
+                 </div>
+                 <p className="text-xs text-zinc-500 mt-4 text-center">Kameranı okutarak anında odaya gir.</p>
+                 <button onClick={() => setIsPartyMenuOpen(false)} className="mt-8 text-zinc-500 hover:text-white font-bold">Kapat ✕</button>
+              </div>
+            )}
+            {(isWeb || !isHost) && (
+              <button onClick={() => setIsPartyMenuOpen(false)} className="absolute top-4 right-6 text-2xl text-zinc-500 hover:text-white font-bold">✕</button>
+            )}
           </div>
         </div>
       )}
@@ -1476,14 +1545,13 @@ function App() {
             </div>
             {selectedMovie.progress && selectedMovie.progress > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb && <div className="mt-4 flex items-center gap-3"><div className="h-1.5 w-64 rounded-full bg-zinc-800"><div className="h-full rounded-full bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{ width: `${Math.min((selectedMovie.progress / ((selectedMovie.runtime || 120) * 60)) * 100, 100)}%` }} /></div></div>}
             
-            <div className="mt-8 flex gap-4">
+            <div className="mt-8 flex flex-wrap gap-4">
               <button onClick={() => startPlayer()} className="flex items-center justify-center gap-2 rounded bg-white px-8 py-3 text-xl font-bold text-black transition hover:bg-zinc-200">
                 <span className="text-2xl">▶</span> {selectedMovie.progress && (selectedMovie.is_watched || 0) === 0 && !isWeb ? t.resume : t.play}
               </button>
               {!isWeb && <button onClick={() => toggleWatchlist(selectedMovie)} className="flex items-center justify-center gap-2 rounded bg-zinc-800/80 backdrop-blur px-8 py-3 text-xl font-bold text-white transition hover:bg-zinc-700">{selectedMovie.watchlist ? "✓ " + t.inWatchlist : "+ " + t.toWatch}</button>}
               
-              {/* YENİ: x264 OPTİMİZE ET BUTONU (SADECE HOST İÇİN) */}
-              {!isWeb && isHost && (
+              {!isWeb && (
                 <button disabled={isConverting} onClick={convertToX264} className={`flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border ${isConverting ? 'bg-blue-600/50 border-blue-500 cursor-not-allowed' : 'bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/40 hover:border-blue-400'}`}>
                   {isConverting ? "⏳ Çevriliyor..." : "🔄 Web İçin Optimize Et (x264)"}
                 </button>

@@ -79,10 +79,25 @@ async fn stream_video(Query(params): Query<HashMap<String, String>>, req: Reques
     let quality = params.get("quality").unwrap_or(&String::from("original")).to_string();
 
     if quality == "original" || quality.is_empty() {
-        return match ServeFile::new(&path).oneshot(req).await {
+        let mut response = match ServeFile::new(&path).oneshot(req).await {
             Ok(res) => res.into_response(),
-            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
+
+        // YENİ: TV'nin MKV formatını tanıyıp çökmemesi için doğru etiketleme (MIME TYPE ZORLAMASI)
+        let content_type = if path.to_lowercase().ends_with(".mkv") {
+            "video/x-matroska"
+        } else if path.to_lowercase().ends_with(".webm") {
+            "video/webm"
+        } else {
+            "video/mp4"
+        };
+
+        // Başlıkları eziyoruz
+        response.headers_mut().insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+        response.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
+        
+        return response;
     }
 
     let (scale, bitrate) = match quality.as_str() {
@@ -113,10 +128,17 @@ async fn stream_video(Query(params): Query<HashMap<String, String>>, req: Reques
     {
         Ok(child) => child,
         Err(_) => {
-            return match ServeFile::new(&path).oneshot(req).await {
+            // FFmpeg çalışmazsa fallback olarak yine orijinal dosyayı TV uyumlu gönderiyoruz
+            let mut response = match ServeFile::new(&path).oneshot(req).await {
                 Ok(res) => res.into_response(),
-                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             };
+
+            let content_type = if path.to_lowercase().ends_with(".mkv") { "video/x-matroska" } else { "video/mp4" };
+            response.headers_mut().insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+            response.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
+            
+            return response;
         }
     };
 
@@ -126,7 +148,8 @@ async fn stream_video(Query(params): Query<HashMap<String, String>>, req: Reques
 
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "video/mp4")
+        .header(header::CONTENT_TYPE, "video/mp4") // FFmpeg çevirisi her zaman mp4 çıkarır
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(body)
         .unwrap()
 }
@@ -230,6 +253,23 @@ fn start_tunnel() -> Result<String, String> {
     }
 }
 
+// FFmpeg kullanarak videoyu x264 MP4 formatına çeviren komut
+#[tauri::command]
+async fn convert_to_x264(video_path: String) -> Result<String, String> {
+    let output_path = video_path.replace(".mkv", "_web.mp4").replace(".mp4", "_web.mp4").replace(".avi", "_web.mp4");
+    
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-i", &video_path, "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-c:a", "aac", &output_path])
+        .status()
+        .map_err(|e| format!("FFmpeg çalıştırılamadı. Bilgisayarında FFmpeg yüklü mü? Hata: {}", e))?;
+
+    if status.success() {
+        Ok(output_path)
+    } else {
+        Err("Dönüştürme işlemi başarısız oldu.".to_string())
+    }
+}
+
 // === 6. ANA FONKSİYON VE ROUTER BAŞLATICI ===
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -277,21 +317,4 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-// FFmpeg kullanarak videoyu x264 MP4 formatına çeviren komut
-#[tauri::command]
-async fn convert_to_x264(video_path: String) -> Result<String, String> {
-    let output_path = video_path.replace(".mkv", "_web.mp4").replace(".mp4", "_web.mp4").replace(".avi", "_web.mp4");
-    
-    let status = std::process::Command::new("ffmpeg")
-        .args(["-i", &video_path, "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-c:a", "aac", &output_path])
-        .status()
-        .map_err(|e| format!("FFmpeg çalıştırılamadı. Bilgisayarında FFmpeg yüklü mü? Hata: {}", e))?;
-
-    if status.success() {
-        Ok(output_path)
-    } else {
-        Err("Dönüştürme işlemi başarısız oldu.".to_string())
-    }
 }
