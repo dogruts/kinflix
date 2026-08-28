@@ -135,7 +135,7 @@ function App() {
   
   const [isHost, setIsHost] = useState(!isWeb); 
   const [isRemoteStreaming, setIsRemoteStreaming] = useState(false);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [remoteStream, _setRemoteStream] = useState<MediaStream | null>(null);
   
   const [isMicActive, setIsMicActive] = useState(false);
   const localMicStreamRef = useRef<MediaStream | null>(null);
@@ -159,6 +159,9 @@ function App() {
   const callRef = useRef<MediaConnection | null>(null); 
   const voiceCallRef = useRef<MediaConnection | null>(null); 
   const wsRef = useRef<WebSocket | null>(null);
+  // YENİ: Geç bağlanan misafirlerin saniye eşitlemesi için hafıza
+  const targetSyncTimeRef = useRef<number | null>(null);
+  const targetSyncPausedRef = useRef<boolean>(false);
 
   let hideControlsTimeout = useRef<number | null>(null);
 
@@ -364,14 +367,14 @@ function App() {
   };
   const handleSaveToken = async (val: string) => { setTmdbToken(val); if(!isWeb) await setSetting("tmdb_token", val); };
 
-  const disconnectParty = () => {
+ const disconnectParty = () => {
     if (connRef.current) { connRef.current.close(); connRef.current = null; }
     if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
     if (peerRef.current) { peerRef.current.destroy(); peerRef.current = null; }
     
     localStorage.removeItem("kinflix_last_session");
     setPartyStatus("disconnected");
-    partyStatusRef.current = "disconnected"; // Anında ref güncellemesi
+    partyStatusRef.current = "disconnected"; 
     setConnMode("none");
     setIsPartyMenuOpen(false);
     
@@ -380,9 +383,10 @@ function App() {
       setSelectedMovie(null);
       setIsPlaying(false);
       setTargetAddress("");
-    } else {
-      initPeerHost(); 
-    }
+    } 
+    
+    // YENİ: Ağ motorunu herkes için tekrar canlandırır, sonsuz döngüyü engeller
+    initPeerHost(); 
   };
 
   async function chooseFolder() {
@@ -635,18 +639,17 @@ function App() {
           }).catch(() => {});
         }
       }
-      else if (data.action === "request_catalog" && hostMode) {
+else if (data.action === "request_catalog" && hostMode) {
         broadcastEvent("catalog", { catalog: moviesRef.current });
         
         if (selectedMovieRef.current) {
            console.log("Yeni misafir geldi, oynatılan filme eşitleniyor...");
-           broadcastEvent("load", { movie: selectedMovieRef.current });
-           setTimeout(() => {
-              if (videoRef.current) {
-                 broadcastEvent("seek", { time: videoRef.current.currentTime });
-                 broadcastEvent(videoRef.current.paused ? "pause" : "play", { time: videoRef.current.currentTime });
-              }
-           }, 800); 
+           // ESKİDEN 800ms BEKLEYİP SEEK ATILIYORDU, ARTIK TEK PAKETTE YEDİRİLDİ!
+           broadcastEvent("load", { 
+             movie: selectedMovieRef.current,
+             time: videoRef.current ? videoRef.current.currentTime : 0,
+             isPaused: videoRef.current ? videoRef.current.paused : false
+           });
         }
       }
       else if (data.action === "catalog" && !hostMode) {
@@ -657,6 +660,17 @@ function App() {
       }
       else if (data.action === "load" && !hostMode) { 
         setSelectedMovie(data.movie); setIsPlaying(true); setIsRemoteStreaming(true); 
+      }
+      else if (data.action === "load" && !hostMode) { 
+        setSelectedMovie(data.movie); 
+        setIsPlaying(true); 
+        setIsRemoteStreaming(true); 
+        
+        // YENİ: Host anlık zamanı yolladıysa, video hazır olana kadar hafızaya al
+        if (data.time !== undefined) {
+          targetSyncTimeRef.current = data.time;
+          targetSyncPausedRef.current = data.isPaused;
+        }
       }
       else if (data.action === "chat_msg") {
         const receivedMsg = data.msg as ChatMessage;
@@ -696,9 +710,9 @@ function App() {
     };
   });
 
-  const connectParty = (target: string) => {
+const connectParty = (target: string) => {
     setPartyStatus("connecting");
-    partyStatusRef.current = "connecting"; // Anında senkronizasyon
+    partyStatusRef.current = "connecting"; 
 
     if (!isHostRef.current) {
       localStorage.setItem("kinflix_last_session", JSON.stringify({ target, time: Date.now() }));
@@ -709,25 +723,27 @@ function App() {
 
     if (!target) { setPartyStatus("disconnected"); partyStatusRef.current = "disconnected"; return; }
     
-    // YENİ: 8 Saniye Bağlantı Zaman Aşımı (Sonsuz Döngü Kırıcı)
+    const cleanTarget = target.trim(); // Kodu girerken kazara boşluk bırakılırsa temizler
+    
+    // YENİ: Timeout süresi WebRTC için 15 Saniyeye çıkarıldı
     setTimeout(() => {
       if (partyStatusRef.current === 'connecting') {
-        console.log("Bağlantı zaman aşımı. Host ölü.");
+        console.log("Bağlantı zaman aşımı.");
         disconnectParty();
-        alert("❌ Odaya bağlanılamadı! Host uygulamayı kapatmış veya kodu değişmiş olabilir.");
+        alert("❌ Odaya bağlanılamadı! Host uygulamayı kapatmış, kod değişmiş veya internet WebRTC'yi engelliyor olabilir.\nAynı evdeyseniz 6 haneli mavi kodu kullanın.");
       }
-    }, 8000);
+    }, 15000);
 
-    const isIp = target.includes(".") || target.startsWith("http") || target === "localhost";
+    const isIp = cleanTarget.includes(".") || cleanTarget.startsWith("http") || cleanTarget === "localhost";
     
-    if (!isIp && target.length === 6) {
-      if (target.startsWith("9")) {
-        const val = parseInt(target.slice(1));
+    if (!isIp && cleanTarget.length === 6) {
+      if (cleanTarget.startsWith("9")) {
+        const val = parseInt(cleanTarget.slice(1));
         const ip = `192.168.${Math.floor(val / 256)}.${val % 256}`;
         setConnMode("ip"); connModeRef.current = "ip";
         connectWebSocket(ip); return;
-      } else if (target.startsWith("8")) {
-        const val = parseInt(target.slice(1));
+      } else if (cleanTarget.startsWith("8")) {
+        const val = parseInt(cleanTarget.slice(1));
         const ip = `10.0.${Math.floor(val / 256)}.${val % 256}`;
         setConnMode("ip"); connModeRef.current = "ip";
         connectWebSocket(ip); return;
@@ -736,48 +752,55 @@ function App() {
 
     if (isIp) { 
       setConnMode("ip"); connModeRef.current = "ip";
-      connectWebSocket(target); 
+      connectWebSocket(cleanTarget); 
     } else { 
       setConnMode("webrtc"); connModeRef.current = "webrtc";
-      const targetId = target.length === 4 && !isNaN(Number(target)) ? `kinflix-${target}` : target;
+      const targetId = cleanTarget.length === 4 && !isNaN(Number(cleanTarget)) ? `kinflix-${cleanTarget}` : cleanTarget;
       connectPeerJS(targetId); 
     }
   };
 
   const connectPeerJS = (targetId: string) => {
-    if (!peerRef.current) return;
-    const conn = peerRef.current.connect(targetId);
-    connRef.current = conn;
+    // Motor yoksa önce motoru kur
+    if (!peerRef.current || peerRef.current.destroyed) {
+      initPeerHost();
+    }
     
-    conn.on('open', () => { 
-      setPartyStatus("connected"); partyStatusRef.current = "connected";
-      setIsHost(false); isHostRef.current = false;
-      setIsPartyMenuOpen(false); 
+    const doConnect = () => {
+      if (!peerRef.current) return;
+      const conn = peerRef.current.connect(targetId);
+      connRef.current = conn;
       
-      setTimeout(() => {
-        if (connRef.current?.open) {
-          connRef.current.send({ action: "request_catalog" });
-          setTimeout(() => connRef.current?.send({ action: "request_catalog" }), 2000);
+      conn.on('open', () => { 
+        setPartyStatus("connected"); partyStatusRef.current = "connected";
+        setIsHost(false); isHostRef.current = false;
+        setIsPartyMenuOpen(false); 
+        
+        setTimeout(() => {
+          if (connRef.current?.open) {
+            connRef.current.send({ action: "request_catalog" });
+            setTimeout(() => connRef.current?.send({ action: "request_catalog" }), 2000);
+          }
+        }, 500);
+      });
+      
+      conn.on('error', () => { 
+        if (partyStatusRef.current === 'connecting') {
+          setPartyStatus("disconnected"); partyStatusRef.current = "disconnected";
         }
-      }, 500);
-    });
-    
-    conn.on('error', () => { setPartyStatus("disconnected"); partyStatusRef.current = "disconnected"; });
-    
-    conn.on('data', (data) => {
-      if (networkHandlerRef.current) networkHandlerRef.current(data);
-    });
-    
-    peerRef.current.on('call', (call) => {
-      if (call.metadata?.type === 'voice_chat') {
-        call.answer();
-        call.on('stream', (audioStream) => { if (remoteAudioRef.current) { remoteAudioRef.current.srcObject = audioStream; remoteAudioRef.current.play().catch(()=>{}); } });
-        return;
-      }
-      call.answer(); 
-      callRef.current = call;
-      call.on('stream', (remoteMediaStream) => { setRemoteStream(remoteMediaStream); setIsRemoteStreaming(true); setIsPlaying(true); setIsVideoPlaying(true); });
-    });
+      });
+      
+      conn.on('data', (data) => {
+        if (networkHandlerRef.current) networkHandlerRef.current(data);
+      });
+    };
+
+    // Peer açık deilse, açılmasını bekleyip sıraya alır. Eskiden burası takılıyordu!
+    if (peerRef.current!.open) {
+      doConnect();
+    } else {
+      peerRef.current!.on('open', doConnect);
+    }
   };
 
   const connectWebSocket = async (address: string) => {
@@ -1111,10 +1134,16 @@ function App() {
         </div>
       )}
 
-      {isWeb && !isTV && partyStatus === 'connecting' && (
+{isWeb && !isTV && partyStatus === 'connecting' && (
         <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
           <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
-          <h1 className="text-3xl font-bold text-white animate-pulse">Odaya Bağlanılıyor...</h1>
+          <h1 className="text-3xl font-bold text-white animate-pulse mb-8">Odaya Bağlanılıyor...</h1>
+          <button 
+            onClick={disconnectParty} 
+            className="rounded-lg bg-zinc-800/80 px-6 py-3 text-sm font-bold text-zinc-300 transition hover:bg-zinc-700 hover:text-white border border-zinc-700 shadow-xl"
+          >
+            ✕ İptal Et ve Geri Dön
+          </button>
         </div>
       )}
 
@@ -1226,9 +1255,15 @@ function App() {
                    <h3 className="text-2xl font-bold text-green-400 mb-2">Başarıyla Bağlandınız!</h3>
                    <p className="text-zinc-400 mb-8">Şu anda oda kurucusunun (Host) kütüphanesini görüntülüyorsunuz.</p>
                    
-                   <button onClick={() => broadcastEvent("request_catalog")} className="w-full rounded bg-blue-600/20 py-3 text-blue-400 font-bold hover:bg-blue-600/40 border border-blue-900/50 transition mb-4">
-                     🔄 Kataloğu Senkronize Et (Eğer Boşsa Tıkla)
-                   </button>
+<button onClick={() => {
+     if (partyStatus === 'connected') {
+       broadcastEvent("request_catalog");
+     } else {
+       alert("Önce bir odaya bağlı olmalısın!");
+     }
+   }} className="w-full rounded bg-blue-600/20 py-3 text-blue-400 font-bold hover:bg-blue-600/40 border border-blue-900/50 transition mb-4">
+     🔄 Kataloğu Senkronize Et
+   </button>
                    
                    <button onClick={disconnectParty} className="w-full rounded bg-red-600/20 py-3 text-red-500 font-bold hover:bg-red-600/40 border border-red-900/50 transition">
                      Odadan Ayrıl / Bağlantıyı Kes
@@ -1368,7 +1403,26 @@ function App() {
             playsInline
             onClick={togglePlay}
             onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-            onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); if (selectedMovie.progress && selectedMovie.progress > 0 && !isWeb) e.currentTarget.currentTime = selectedMovie.progress; }}
+            onLoadedMetadata={(e) => { 
+              setDuration(e.currentTarget.duration); 
+              
+              // 1. ÖNCELİK: Eğer Ağdan izliyorsak ve Host bir saniye verdiyse anında oraya ışınlan
+              if (isRemoteStreaming && targetSyncTimeRef.current !== null) {
+                e.currentTarget.currentTime = targetSyncTimeRef.current;
+                if (!targetSyncPausedRef.current) {
+                  e.currentTarget.play().catch(() => setIsVideoPlaying(false));
+                  setIsVideoPlaying(true);
+                } else {
+                  e.currentTarget.pause();
+                  setIsVideoPlaying(false);
+                }
+                targetSyncTimeRef.current = null; // Görev bitti, hafızayı sil
+              } 
+              // 2. ÖNCELİK: Host kendi lokal filmini izliyorsa kaldığı yerden (progress) başlasın
+              else if (selectedMovie.progress && selectedMovie.progress > 0 && !isWeb && !isRemoteStreaming) {
+                e.currentTarget.currentTime = selectedMovie.progress;
+              }
+            }}
             className="h-full w-full object-contain cursor-pointer"
           >
             {activeSubIndex >= 0 && localSubs[activeSubIndex] && (
