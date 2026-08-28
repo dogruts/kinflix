@@ -2,7 +2,10 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import Peer, { DataConnection, MediaConnection } from "peerjs";
 
-const isWeb = typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window) && !('__TAURI_IPC__' in window) && !('__TAURI__' in window);
+// YENİ: Cihaz Tespiti Radarı (Tauri, Web ve TV ayrımı)
+const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI_IPC__' in window || '__TAURI__' in window);
+const isTV = typeof navigator !== 'undefined' && /(Web0S|NetCast|SmartTV|Tizen)/i.test(navigator.userAgent);
+const isWeb = !isTauri; // Tauri değilse Web platformundadır (Tarayıcı veya TV)
 
 import { getMovieMetadata } from "./tmdb";
 import {
@@ -50,7 +53,16 @@ type SortOption = "title_asc" | "year_desc" | "rating_desc";
 type TabState = "home" | "library" | "watchlist";
 type Lang = "tr" | "en";
 type SubtitleTrack = { id: string; url: string; label: string; srtContent: string; offset: number; originalPath?: string };
-type ChatMessage = { id: string; sender: "me" | "peer"; type: "text" | "image"; content: string; timestamp: number };
+
+// YENİ: Emoji Tepkileri (Reactions) Tipi Eklendi
+type ChatMessage = { 
+  id: string; 
+  sender: "me" | "peer"; 
+  type: "text" | "image"; 
+  content: string; 
+  timestamp: number;
+  reactions?: Record<string, number>; 
+};
 
 const shuffleArray = <T,>(array: T[]): T[] => {
   const newArr = [...array];
@@ -132,8 +144,10 @@ function App() {
   let hideControlsTimeout = useRef<number | null>(null);
 
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const isChatOpenRef = useRef(false); // Ağ sinyallerinde güncel durumu bilmek için
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0); // YENİ: Okunmamış mesaj sayısı
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -207,7 +221,6 @@ function App() {
 
   const heroMovie = heroMovies[heroIndex] || movies[0];
 
-  // YENİ: URL'DEN OTOMATİK ODAYA KATILMA (Telefondan QR okutunca anında girmek için)
   useEffect(() => {
     if (isWeb) {
       const params = new URLSearchParams(window.location.search);
@@ -219,38 +232,21 @@ function App() {
     }
   }, []);
 
-  // YENİ: TV KUMANDASI (D-PAD) DESTEĞİ
   useEffect(() => {
     const handleTvRemote = (e: KeyboardEvent) => {
-      if (!isPlaying || !videoRef.current || isChatOpen) return; // Chat açıksa kumanda oraya çalışsın
-      
+      if (!isPlaying || !videoRef.current || isChatOpen) return; 
       switch(e.key) {
-        case "ArrowRight":
-          handleSeek(videoRef.current.currentTime + 10);
-          break;
-        case "ArrowLeft":
-          handleSeek(videoRef.current.currentTime - 10);
-          break;
-        case "Enter":
-          togglePlay();
-          break;
+        case "ArrowRight": handleSeek(videoRef.current.currentTime + 10); break;
+        case "ArrowLeft": handleSeek(videoRef.current.currentTime - 10); break;
+        case "Enter": togglePlay(); break;
         case "ArrowUp":
-          setVolume(v => {
-            const newVol = Math.min(1, v + 0.1);
-            if(videoRef.current) videoRef.current.volume = newVol;
-            return newVol;
-          });
+          setVolume(v => { const newVol = Math.min(1, v + 0.1); if(videoRef.current) videoRef.current.volume = newVol; return newVol; });
           break;
         case "ArrowDown":
-          setVolume(v => {
-            const newVol = Math.max(0, v - 0.1);
-            if(videoRef.current) videoRef.current.volume = newVol;
-            return newVol;
-          });
+          setVolume(v => { const newVol = Math.max(0, v - 0.1); if(videoRef.current) videoRef.current.volume = newVol; return newVol; });
           break;
       }
     };
-    
     window.addEventListener("keydown", handleTvRemote);
     return () => window.removeEventListener("keydown", handleTvRemote);
   }, [isPlaying, isChatOpen]);
@@ -259,7 +255,7 @@ function App() {
     async function loadData() {
       if (!isWeb) {
         import('@tauri-apps/plugin-updater').then(({ check }) => {
-          check().then(update => { if (update?.available) setUpdateInfo(update); }).catch(err => console.log("Güncelleme kontrol hatası:", err));
+          check().then(update => { if (update?.available) setUpdateInfo(update); }).catch(err => console.log("Güncelleme hatası:", err));
         });
       }
 
@@ -288,6 +284,12 @@ function App() {
     }
     loadData();
   }, []);
+
+  // YENİ: Okunmamış mesaj sayacını sıfırlama
+  useEffect(() => {
+    isChatOpenRef.current = isChatOpen;
+    if (isChatOpen) setUnreadCount(0);
+  }, [isChatOpen]);
 
   useEffect(() => { if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, [chatMessages, isChatOpen]);
   useEffect(() => { isHostRef.current = isHost; }, [isHost]);
@@ -492,6 +494,23 @@ function App() {
     reader.readAsDataURL(file);
   };
 
+  // YENİ: Emoji Reaction Gönderme
+  const sendReaction = (msgId: string, emoji: string) => {
+    setChatMessages(prev => {
+      const newChat = prev.map(m => {
+        if (m.id === msgId) {
+          const reactions = { ...(m.reactions || {}) };
+          reactions[emoji] = (reactions[emoji] || 0) + 1;
+          return { ...m, reactions };
+        }
+        return m;
+      });
+      localStorage.setItem("kinflix_chat_history", JSON.stringify(newChat));
+      return newChat;
+    });
+    broadcastEvent("chat_reaction", { msgId, emoji });
+  };
+
   const toggleVoiceChat = async () => {
     if (isMicActive) {
       if (localMicStreamRef.current) localMicStreamRef.current.getTracks().forEach(t => t.stop());
@@ -515,6 +534,22 @@ function App() {
       const receivedMsg = data.msg as ChatMessage;
       receivedMsg.sender = "peer"; 
       saveChatMessage(receivedMsg);
+      // Mesaj geldiğinde sohbet kapalıysa bildirim sayısını artır
+      if (!isChatOpenRef.current) setUnreadCount(prev => prev + 1);
+    }
+    else if (data.action === "chat_reaction") {
+      setChatMessages(prev => {
+        const newChat = prev.map(m => {
+          if (m.id === data.msgId) {
+            const reactions = { ...(m.reactions || {}) };
+            reactions[data.emoji] = (reactions[data.emoji] || 0) + 1;
+            return { ...m, reactions };
+          }
+          return m;
+        });
+        localStorage.setItem("kinflix_chat_history", JSON.stringify(newChat));
+        return newChat;
+      });
     }
     else if (data.action === "voice_chat_closed") { if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null; }
     else if (data.action === "catalog" && !isHostMode) setMovies(data.catalog);
@@ -536,7 +571,6 @@ function App() {
     }
   };
 
-  // YENİ: KISA KOD KONTROLÜ
   const connectParty = (target: string) => {
     if (!target) return;
     const isIp = target.includes(".") || target.startsWith("http") || target === "localhost";
@@ -544,7 +578,6 @@ function App() {
       setConnMode("ip"); connectWebSocket(target); 
     } else { 
       setConnMode("webrtc"); 
-      // 4 Haneli kod girildiyse başına "kinflix-" ekleyerek bağlan, yoksa olduğu gibi bağlan
       const targetId = target.length === 4 && !isNaN(Number(target)) ? `kinflix-${target}` : target;
       connectPeerJS(targetId); 
     }
@@ -584,19 +617,13 @@ function App() {
     wsRef.current = ws;
   };
 
-const initPeerHost = (currentMovies: Movie[]) => {
+  const initPeerHost = (currentMovies: Movie[]) => {
     if (peerRef.current) return;
-    
-    // Rastgele 4 haneli kod (Örn: 5842) üret ve PeerJS ID'si olarak ayarla
     const shortCode = Math.floor(1000 + Math.random() * 9000).toString();
     const customId = isWeb ? undefined : `kinflix-${shortCode}`; 
     
-    // YENİ: customId varsa içine yaz, yoksa parantezi boş bırak! TS artık mutlu.
-    const peer = customId ? new Peer(customId) : new Peer();
-    peer.on('open', (id) => {
-      // Ekranda uzun kimliği değil, bizim 4 haneli kodu göster
-      setPeerId(isWeb ? id : shortCode);
-    });
+    const peer = customId ? new Peer(customId) : new Peer(); 
+    peer.on('open', (id) => { setPeerId(isWeb ? id : shortCode); });
     
     peer.on('connection', (conn) => {
       setPartyStatus("connected"); setConnMode("webrtc"); connRef.current = conn; 
@@ -830,7 +857,7 @@ const initPeerHost = (currentMovies: Movie[]) => {
       
       <audio ref={remoteAudioRef} autoPlay />
 
-      {updateInfo && (
+      {updateInfo && !isWeb && (
         <div className="fixed top-0 left-0 right-0 z-[500] bg-blue-600 text-white px-6 py-3 flex items-center justify-between shadow-2xl">
           <div className="font-bold flex items-center gap-3">
             <span className="text-2xl">🚀</span>
@@ -848,19 +875,32 @@ const initPeerHost = (currentMovies: Movie[]) => {
         </div>
       )}
 
-      {/* WEB MİSAFİR GİRİŞ EKRANI (TV UYUMLU) */}
-      {isWeb && partyStatus !== 'connected' && (
+      {/* WEB MİSAFİR GİRİŞ EKRANI (Normal Tarayıcı için) */}
+      {isWeb && !isTV && partyStatus !== 'connected' && (
+        <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
+          <h1 className="text-6xl font-extrabold tracking-tight mb-8">KIN<span className="text-red-600">FLIX</span> <span className="text-2xl text-zinc-500">WEB</span></h1>
+          <p className="text-zinc-400 mb-8 max-w-md">Arkadaşının bilgisayarına doğrudan bağlanıp birlikte film izlemek için oda kodunu gir.</p>
+          <div className="w-full max-w-md flex flex-col gap-4">
+            <input 
+              type="text" placeholder="Oda Kodu (Örn: 1a2b3c4d)" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} 
+              onKeyDown={(e) => e.key === 'Enter' && connectParty(targetAddress)}
+              className="w-full rounded-xl border-2 border-zinc-800 bg-black px-6 py-4 text-center text-xl text-white outline-none focus:border-red-600 transition font-mono uppercase tracking-widest" 
+            />
+            <button onClick={() => connectParty(targetAddress)} className="w-full rounded-xl bg-red-600 py-4 text-xl font-bold hover:bg-red-700 transition shadow-[0_0_20px_rgba(220,38,38,0.4)]">
+              Odaya Katıl 🚀
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* TV MİSAFİR GİRİŞ EKRANI (LG webOS / Smart TV için) */}
+      {isTV && partyStatus !== 'connected' && (
         <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
           <h1 className="text-6xl font-extrabold tracking-tight mb-8">KIN<span className="text-red-600">FLIX</span> <span className="text-2xl text-zinc-500">TV</span></h1>
           <p className="text-zinc-400 mb-8 max-w-md">Televizyon kumandası ile oda kodunu gir ve bağlan.</p>
-          
           <div className="w-full max-w-md flex flex-col gap-4">
             <input 
-              autoFocus // TV Klavyesi otomatik açılsın
-              type="number" // TV'de numaratör açılsın
-              placeholder="4 Haneli Kodu Girin" 
-              value={targetAddress} 
-              onChange={(e) => setTargetAddress(e.target.value)} 
+              autoFocus type="number" placeholder="4 Haneli Kodu Girin" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} 
               onKeyDown={(e) => e.key === 'Enter' && connectParty(targetAddress)}
               className="w-full rounded-xl border-2 border-zinc-800 bg-black px-6 py-4 text-center text-3xl text-white outline-none focus:border-red-600 transition font-mono tracking-widest" 
             />
@@ -874,7 +914,6 @@ const initPeerHost = (currentMovies: Movie[]) => {
       <header className="sticky top-0 z-40 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent px-10 py-6 backdrop-blur-sm">
         <div className="flex items-center gap-10">
           <h1 className="text-3xl font-extrabold tracking-tight">KIN<span className="text-red-600">FLIX</span></h1>
-          
           <nav className="hidden gap-6 text-sm font-semibold md:flex items-center">
             <button onClick={() => setActiveTab("home")} className={`transition hover:text-zinc-300 ${activeTab === "home" ? "text-white" : "text-zinc-500"}`}>{t.home}</button>
             <button onClick={() => setActiveTab("library")} className={`transition hover:text-zinc-300 ${activeTab === "library" ? "text-white" : "text-zinc-500"}`}>{t.library}</button>
@@ -884,24 +923,21 @@ const initPeerHost = (currentMovies: Movie[]) => {
             </button>
           </nav>
         </div>
-        
         <div className="flex items-center gap-3">
           <button onClick={() => setIsPartyMenuOpen(true)} className={`flex items-center gap-2 rounded px-4 py-2 text-sm font-bold backdrop-blur transition ${partyStatus === 'connected' ? 'bg-green-600/80 hover:bg-green-700' : 'bg-zinc-800/80 hover:bg-zinc-700'}`}>
             🎉 {partyStatus === 'connected' ? (isHost ? 'Oda Kuruldu' : 'MİSAFİR MODU') : t.party}
           </button>
-          
           {isHost && movies.length > 0 && !isWeb && (
             <button onClick={syncMovieMetadata} disabled={syncing} className="rounded bg-zinc-800/80 px-4 py-2 text-sm font-bold backdrop-blur transition hover:bg-zinc-700 disabled:opacity-50">
               {syncing ? t.syncing : t.sync}
             </button>
           )}
-          
           <button onClick={() => setIsStatsOpen(true)} className="flex h-9 w-9 items-center justify-center rounded bg-zinc-800/80 backdrop-blur transition hover:bg-zinc-700" title="İstatistikler">📊</button>
           <button onClick={() => setIsSettingsOpen(true)} className="flex h-9 w-9 items-center justify-center rounded bg-zinc-800/80 backdrop-blur transition hover:bg-zinc-700" title="Ayarlar">⚙️</button>
         </div>
       </header>
 
-      {/* PARTY MODALI (YENİ: QR KOD İLE) */}
+      {/* PARTY MODALI (HOST İÇİN QR KODLU) */}
       {isPartyMenuOpen && !isWeb && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
           <div className="w-full max-w-2xl rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 flex gap-8">
@@ -909,14 +945,12 @@ const initPeerHost = (currentMovies: Movie[]) => {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-3xl font-bold">🎉 {t.party}</h2>
               </div>
-              
               <div className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-4 text-center">
                 <h3 className="mb-2 text-sm font-semibold text-zinc-400">TV ve Telefon İçin Kısayol:</h3>
                 <div className="bg-black rounded-lg p-3 text-4xl font-black tracking-widest text-green-400 border border-zinc-800">
                   {peerId || "..."}
                 </div>
               </div>
-
               <div>
                 <h3 className="mb-2 text-sm font-semibold text-zinc-400">Veya Arkadaşının Kodunu Gir:</h3>
                 <div className="flex gap-2">
@@ -925,21 +959,14 @@ const initPeerHost = (currentMovies: Movie[]) => {
                 </div>
               </div>
             </div>
-            
-            {/* YENİ: QR KOD BÖLÜMÜ */}
             <div className="w-48 flex flex-col items-center justify-center border-l border-zinc-800 pl-8">
                <h3 className="text-sm font-bold text-zinc-400 mb-4 text-center">Telefondan Katıl</h3>
                <div className="bg-white p-2 rounded-xl">
-                 <img 
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent('https://kinflix.vercel.app/?room=' + peerId)}`} 
-                    alt="Kinflix QR" 
-                    className="w-32 h-32"
-                 />
+                 <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent('https://kinflix.vercel.app/?room=' + peerId)}`} alt="Kinflix QR" className="w-32 h-32" />
                </div>
                <p className="text-xs text-zinc-500 mt-4 text-center">Kameranı okutarak anında odaya gir.</p>
                <button onClick={() => setIsPartyMenuOpen(false)} className="mt-8 text-zinc-500 hover:text-white font-bold">Kapat ✕</button>
             </div>
-
           </div>
         </div>
       )}
@@ -948,12 +975,10 @@ const initPeerHost = (currentMovies: Movie[]) => {
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4 animate-in fade-in zoom-in-95">
           <div className="w-full max-w-lg rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 relative overflow-hidden">
             <div className="absolute -top-20 -right-20 w-64 h-64 bg-red-600/20 rounded-full blur-3xl pointer-events-none"></div>
-            
             <div className="mb-8 flex items-center justify-between relative z-10">
               <h2 className="text-3xl font-extrabold text-white">📊 İstatistiklerin</h2>
               <button onClick={() => setIsStatsOpen(false)} className="text-3xl text-zinc-500 hover:text-white transition">✕</button>
             </div>
-            
             <div className="grid grid-cols-2 gap-4 relative z-10">
               <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 text-center shadow-lg">
                 <p className="text-4xl font-black text-white">{userStats.watchedCount}</p>
@@ -972,13 +997,20 @@ const initPeerHost = (currentMovies: Movie[]) => {
         </div>
       )}
 
-      {partyStatus === 'connected' && !isPlaying && (
-        <button onClick={() => setIsChatOpen(!isChatOpen)} className="fixed bottom-8 right-8 z-[150] flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 shadow-2xl hover:scale-110 transition-transform text-2xl">
+      {/* SOHBET BUTONU (SADECE WEB VE PC'DE ÇIKAR, TV'DE GÖRÜNMEZ) */}
+      {!isTV && partyStatus === 'connected' && !isPlaying && (
+        <button onClick={() => setIsChatOpen(!isChatOpen)} className="fixed bottom-8 right-8 z-[150] flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 shadow-2xl hover:scale-110 transition-transform text-2xl relative">
           💬
+          {unreadCount > 0 && (
+            <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full shadow-lg border border-red-900 animate-bounce">
+              {unreadCount}
+            </span>
+          )}
         </button>
       )}
 
-      {isChatOpen && partyStatus === 'connected' && (
+      {/* SOHBET MODALI (SADECE WEB VE PC'DE) */}
+      {!isTV && isChatOpen && partyStatus === 'connected' && (
         <div className="fixed right-0 top-0 bottom-0 w-80 bg-zinc-950 border-l border-zinc-800 z-[250] flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
           <div className="p-4 bg-zinc-900 border-b border-zinc-800 flex justify-between items-center shadow-md">
             <h3 className="font-bold text-white flex items-center gap-2">💬 Party Chat <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span></h3>
@@ -988,21 +1020,47 @@ const initPeerHost = (currentMovies: Movie[]) => {
             <button onClick={() => setIsChatOpen(false)} className="text-zinc-400 hover:text-white transition ml-2">✕</button>
           </div>
           
-          <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-zinc-950">
+          <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-zinc-950">
             {chatMessages.map(msg => (
-              <div key={msg.id} className={`max-w-[85%] rounded-xl p-2.5 text-sm shadow-md ${msg.sender === 'me' ? 'bg-blue-600 text-white self-end rounded-tr-sm' : 'bg-zinc-800 text-zinc-200 self-start rounded-tl-sm'}`}>
+              <div key={msg.id} className={`relative group max-w-[85%] rounded-xl p-2.5 text-sm shadow-md ${msg.sender === 'me' ? 'bg-blue-600 text-white self-end rounded-tr-sm' : 'bg-zinc-800 text-zinc-200 self-start rounded-tl-sm'}`}>
                 {msg.type === 'text' ? <p className="break-words">{msg.content}</p> : <img src={msg.content} className="rounded-lg w-full object-cover cursor-pointer hover:opacity-80 transition" onClick={async () => { if(!isWeb) { const { openUrl } = await import('@tauri-apps/plugin-opener'); openUrl(msg.content); } else { window.open(msg.content); } }} />}
+                
+                {/* TEPKİLERİ GÖSTER */}
+                {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                  <div className="flex gap-1 mt-1.5 flex-wrap">
+                    {Object.entries(msg.reactions).map(([emo, count]) => (
+                      <span key={emo} className={`text-xs rounded-full px-1.5 py-0.5 border ${msg.sender === 'me' ? 'bg-blue-700 border-blue-500' : 'bg-zinc-700 border-zinc-600'}`}>
+                        {emo} <span className="opacity-70">{count}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <span className="text-[10px] opacity-50 block mt-1 text-right">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                
+                {/* TEPKİ VERME MENÜSÜ (Hover olunca çıkar) */}
+                <div className={`absolute -top-4 ${msg.sender === 'me' ? 'left-0' : 'right-0'} hidden group-hover:flex bg-zinc-800 border border-zinc-700 rounded-full shadow-xl p-1 gap-1`}>
+                  {['👍', '❤️', '😂', '😲'].map(emo => (
+                     <button key={emo} onClick={() => sendReaction(msg.id, emo)} className="hover:scale-125 transition px-1">{emo}</button>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
           
-          <div className="p-3 bg-zinc-900 border-t border-zinc-800 flex gap-2 items-center">
-            <label className="cursor-pointer text-xl hover:scale-110 transition text-zinc-400 hover:text-white">
-              📷 <input type="file" className="hidden" accept="image/*" onChange={handleSendChatImage} />
-            </label>
-            <input type="text" className="flex-1 bg-black border border-zinc-800 rounded-full px-4 py-2 text-sm text-white outline-none focus:border-blue-500 transition" placeholder={t.chatMsg} value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChatText()} />
-            <button onClick={handleSendChatText} className="text-blue-500 font-bold px-2 hover:text-blue-400 transition">➤</button>
+          <div className="bg-zinc-900 border-t border-zinc-800 flex flex-col">
+            {/* EMOJİ ÇUBUĞU */}
+            <div className="flex gap-3 px-4 pt-2 pb-1 text-xl justify-center border-b border-zinc-800/50 bg-black/20">
+              {['😀', '😂', '❤️', '🔥', '👍', '😲'].map(emo => (
+                <button key={emo} onClick={() => setChatInput(prev => prev + emo)} className="hover:scale-125 transition drop-shadow-md">{emo}</button>
+              ))}
+            </div>
+            <div className="flex gap-2 items-center p-3">
+              <label className="cursor-pointer text-xl hover:scale-110 transition text-zinc-400 hover:text-white">
+                📷 <input type="file" className="hidden" accept="image/*" onChange={handleSendChatImage} />
+              </label>
+              <input type="text" className="flex-1 bg-black border border-zinc-800 rounded-full px-4 py-2 text-sm text-white outline-none focus:border-blue-500 transition" placeholder={t.chatMsg} value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChatText()} />
+              <button onClick={handleSendChatText} className="text-blue-500 font-bold px-2 hover:text-blue-400 transition">➤</button>
+            </div>
           </div>
         </div>
       )}
@@ -1046,9 +1104,10 @@ const initPeerHost = (currentMovies: Movie[]) => {
           <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-6 transition-opacity duration-300 ${showControls ? "opacity-100" : "opacity-0"}`}>
             <button onClick={closePlayer} className="absolute bottom-[90vh] left-6 text-4xl text-white hover:text-red-500 transition drop-shadow-lg">✕</button>
 
-            {partyStatus === 'connected' && (
-              <button onClick={(e) => {e.stopPropagation(); setIsChatOpen(!isChatOpen);}} className="absolute bottom-[90vh] right-6 flex items-center gap-2 bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded-full backdrop-blur transition shadow-xl">
-                💬 SOHBET {isChatOpen ? 'KAPAT' : 'AÇ'}
+            {/* SOHBET BUTONU TV'DE ÇIKMAZ */}
+            {!isTV && partyStatus === 'connected' && (
+              <button onClick={(e) => {e.stopPropagation(); setIsChatOpen(!isChatOpen);}} className="absolute bottom-[90vh] right-6 flex items-center gap-2 bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded-full backdrop-blur transition shadow-xl border border-blue-500">
+                💬 SOHBET {unreadCount > 0 ? `(${unreadCount})` : ''}
               </button>
             )}
 
@@ -1067,7 +1126,7 @@ const initPeerHost = (currentMovies: Movie[]) => {
                 onClick={(e) => { if(isRemoteStreaming) return; const rect = e.currentTarget.getBoundingClientRect(); const x = e.clientX - rect.left; handleSeek((x / rect.width) * duration); }}
               >
                 <div className="absolute top-0 left-0 h-full bg-red-600 rounded-lg shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{width: `${(currentTime/duration)*100}%`}}></div>
-                {hoverTime !== null && !isRemoteStreaming && (
+                {hoverTime !== null && !isRemoteStreaming && !isTV && (
                   <div className="absolute bottom-6 -translate-x-1/2 bg-black border border-zinc-700 rounded overflow-hidden shadow-2xl z-50 flex flex-col items-center pointer-events-none" style={{ left: hoverX }}>
                     <video ref={previewVideoRef} src={getSafeVideoSource()} className="w-40 h-[90px] object-cover" muted />
                     <span className="text-xs font-bold p-1 bg-black/80 w-full text-center">{formatTime(hoverTime)}</span>
@@ -1101,7 +1160,7 @@ const initPeerHost = (currentMovies: Movie[]) => {
 
                 <button onClick={(e) => {e.stopPropagation(); setShowSubMenu(!showSubMenu); setShowSpeedMenu(false);}} className="text-xl font-bold text-zinc-300 hover:text-white">CC</button>
                 
-                <button onClick={togglePip} className="text-2xl text-zinc-300 hover:text-white transition" title="Küçük Pencere">◱</button>
+                {!isTV && <button onClick={togglePip} className="text-2xl text-zinc-300 hover:text-white transition" title="Küçük Pencere">◱</button>}
                 <button onClick={toggleFullscreen} className="text-2xl text-zinc-300 hover:text-white">⛶</button>
                 
                 {showSubMenu && (
@@ -1120,20 +1179,24 @@ const initPeerHost = (currentMovies: Movie[]) => {
                       </div>
                     ))}
                     
-                    <div className="bg-zinc-800 px-4 py-2 mt-1 text-xs font-bold text-zinc-400 uppercase tracking-wider">İnternetten Bul (STREMIO)</div>
-                    <div className="p-2">
-                      {osResults.length === 0 && !isSearchingOS && <button onClick={(e) => {e.stopPropagation(); searchStremioSubtitles()}} className="w-full rounded bg-red-600/20 py-2 text-sm font-bold text-red-500 hover:bg-red-600/40 transition">Altyazı Ara ({lang.toUpperCase()})</button>}
-                      {isSearchingOS && <div className="text-center text-sm text-zinc-400 py-2">Stremio'da Aranıyor...</div>}
-                      {osError && <div className="text-center text-xs text-red-500 py-2 font-bold bg-red-950/30 rounded mb-2">{osError}</div>}
-                      {osResults.map((res: any) => {
-                        const isDownloading = downloadingId === res.id;
-                        return (
-                          <button key={res.id} disabled={isDownloading} onClick={(e) => {e.stopPropagation(); downloadStremioSubtitle(res)}} className={`w-full text-left px-2 py-2 text-xs text-zinc-300 hover:bg-zinc-800 rounded truncate ${isDownloading ? 'opacity-50' : ''}`}>
-                            {isDownloading ? "⏳ İndiriliyor..." : `⬇ Stremio [${res.lang}] - Dosya`}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    {!isTV && (
+                      <>
+                        <div className="bg-zinc-800 px-4 py-2 mt-1 text-xs font-bold text-zinc-400 uppercase tracking-wider">İnternetten Bul (STREMIO)</div>
+                        <div className="p-2">
+                          {osResults.length === 0 && !isSearchingOS && <button onClick={(e) => {e.stopPropagation(); searchStremioSubtitles()}} className="w-full rounded bg-red-600/20 py-2 text-sm font-bold text-red-500 hover:bg-red-600/40 transition">Altyazı Ara ({lang.toUpperCase()})</button>}
+                          {isSearchingOS && <div className="text-center text-sm text-zinc-400 py-2">Stremio'da Aranıyor...</div>}
+                          {osError && <div className="text-center text-xs text-red-500 py-2 font-bold bg-red-950/30 rounded mb-2">{osError}</div>}
+                          {osResults.map((res: any) => {
+                            const isDownloading = downloadingId === res.id;
+                            return (
+                              <button key={res.id} disabled={isDownloading} onClick={(e) => {e.stopPropagation(); downloadStremioSubtitle(res)}} className={`w-full text-left px-2 py-2 text-xs text-zinc-300 hover:bg-zinc-800 rounded truncate ${isDownloading ? 'opacity-50' : ''}`}>
+                                {isDownloading ? "⏳ İndiriliyor..." : `⬇ Stremio [${res.lang}] - Dosya`}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -1149,7 +1212,7 @@ const initPeerHost = (currentMovies: Movie[]) => {
               <h2 className="text-3xl font-bold">⚙️ {t.settings}</h2>
               <button onClick={() => setIsSettingsOpen(false)} className="text-3xl text-zinc-500 hover:text-white">✕</button>
             </div>
-            {(!isHost && partyStatus === 'connected') || isWeb ? (
+            {(!isHost && partyStatus === 'connected') || isWeb || isTV ? (
               <div className="text-center py-10">
                 <h3 className="text-2xl font-bold text-white mb-4">Misafir Modundasınız 🎭</h3>
                 <p className="text-zinc-400 leading-relaxed max-w-md mx-auto">Oda kurucusunun (Host) kütüphanesini görüntülüyorsunuz. Bütün film verileri doğrudan Host'tan size aktarılıyor.<br/><br/>Arkanıza yaslanın ve filmin tadını çıkarın!</p>

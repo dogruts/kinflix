@@ -10,6 +10,6 @@
   "resolution": "1920x1080",
   "bgColor": "#0b0b0b",
   "transparent": false,
-  "largeIcon": "icon.png",
-  "icon": "icon.png"
+  "largeIcon": "icon.jpg",
+  "icon": "icon.jpg"
 }
