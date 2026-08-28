@@ -371,6 +371,7 @@ function App() {
     
     localStorage.removeItem("kinflix_last_session");
     setPartyStatus("disconnected");
+    partyStatusRef.current = "disconnected"; // Anında ref güncellemesi
     setConnMode("none");
     setIsPartyMenuOpen(false);
     
@@ -443,7 +444,6 @@ function App() {
     setSelectedMovie(randomMovie);
   };
 
-  // YENİ: x264 Dönüştürücü (Artık Tüm Desktop Kullanıcılarına Açık)
   const convertToX264 = async () => {
     if (!selectedMovie || isWeb) return;
     setIsConverting(true);
@@ -698,7 +698,8 @@ function App() {
 
   const connectParty = (target: string) => {
     setPartyStatus("connecting");
-    
+    partyStatusRef.current = "connecting"; // Anında senkronizasyon
+
     if (!isHostRef.current) {
       localStorage.setItem("kinflix_last_session", JSON.stringify({ target, time: Date.now() }));
     }
@@ -706,8 +707,17 @@ function App() {
     setChatMessages([]);
     localStorage.removeItem("kinflix_chat_history");
 
-    if (!target) { setPartyStatus("disconnected"); return; }
+    if (!target) { setPartyStatus("disconnected"); partyStatusRef.current = "disconnected"; return; }
     
+    // YENİ: 8 Saniye Bağlantı Zaman Aşımı (Sonsuz Döngü Kırıcı)
+    setTimeout(() => {
+      if (partyStatusRef.current === 'connecting') {
+        console.log("Bağlantı zaman aşımı. Host ölü.");
+        disconnectParty();
+        alert("❌ Odaya bağlanılamadı! Host uygulamayı kapatmış veya kodu değişmiş olabilir.");
+      }
+    }, 8000);
+
     const isIp = target.includes(".") || target.startsWith("http") || target === "localhost";
     
     if (!isIp && target.length === 6) {
@@ -752,7 +762,7 @@ function App() {
       }, 500);
     });
     
-    conn.on('error', () => { setPartyStatus("disconnected"); });
+    conn.on('error', () => { setPartyStatus("disconnected"); partyStatusRef.current = "disconnected"; });
     
     conn.on('data', (data) => {
       if (networkHandlerRef.current) networkHandlerRef.current(data);
@@ -791,14 +801,14 @@ function App() {
       }, 500);
     };
     
-    ws.onerror = () => { setPartyStatus("disconnected"); };
+    ws.onerror = () => { setPartyStatus("disconnected"); partyStatusRef.current = "disconnected"; };
     ws.onmessage = (e) => { 
       try { 
         const data = JSON.parse(e.data); 
         if (networkHandlerRef.current) networkHandlerRef.current(data); 
       } catch(err) {} 
     };
-    ws.onclose = () => { if (partyStatusRef.current !== 'disconnected') setPartyStatus("disconnected"); };
+    ws.onclose = () => { if (partyStatusRef.current !== 'disconnected') { setPartyStatus("disconnected"); partyStatusRef.current = "disconnected"; } };
     wsRef.current = ws;
   };
 
@@ -811,6 +821,16 @@ function App() {
     const customId = isWeb ? undefined : `kinflix-${shortCode}`; 
     
     const peer = customId ? new Peer(customId) : new Peer(); 
+    
+    // YENİ: PEERJS HATA YAKALAYICI (Ölü Host Kırıcı)
+    peer.on('error', (err: any) => {
+      console.error("PeerJS Hatası:", err);
+      if (err.type === 'peer-unavailable' || err.type === 'network') {
+        disconnectParty();
+        alert("❌ Hata: Karşı taraf bulunamadı veya kod geçersiz!");
+      }
+    });
+
     peer.on('open', (id) => { setPeerId(isWeb ? id : shortCode); });
     
     peer.on('connection', (conn) => {
@@ -859,28 +879,22 @@ function App() {
     if (!isWeb) { import("@tauri-apps/api/core").then(({ convertFileSrc }) => setTauriConvertFileSrc(() => convertFileSrc)); }
   }, []);
 
-  // YENİ: WINDOWS-TO-WINDOWS SİYAH EKRAN ÇÖZÜMÜ
   const getSafeVideoSource = () => {
     if (!selectedMovie) return ""; 
     
-    // 1. Misafir: Eğer Ağ üzerinden (IP/HTTP) bağlanıyorsa
     if (isRemoteStreaming && connModeRef.current === 'ip') {
       const baseUrl = targetAddressRef.current.startsWith("http") ? targetAddressRef.current : `http://${targetAddressRef.current}:8765`;
       return `${baseUrl}/video?path=${encodeURIComponent(selectedMovie.video_path)}&quality=720p`;
     }
     
-    // 2. Misafir: Eğer WebRTC (4-haneli kod) ile bağlanıyorsa kaynak srcObject (Stream) üzerinden gelir.
     if (isRemoteStreaming && connModeRef.current === 'webrtc') return "";
     
     if (isWeb) return "";
 
-    // 3. HOST: Eğer Host WebRTC odasındaysa, Tauri protokolü güvenliği nedeniyle captureStream() SİYAH verir.
-    // Bunu aşmak için yayın esnasında Host'un kendisi de kendi Axum sunucusundan çeker!
     if (partyStatusRef.current === 'connected' && connModeRef.current === 'webrtc') {
       return `http://127.0.0.1:8765/video?path=${encodeURIComponent(selectedMovie.video_path)}`;
     }
 
-    // 4. HOST: Sadece kendi izliyorsa kusursuz yerel Tauri protokolünü kullanır.
     return tauriConvertFileSrc ? tauriConvertFileSrc(selectedMovie.video_path) : "";
   };
 
@@ -1551,7 +1565,7 @@ function App() {
               </button>
               {!isWeb && <button onClick={() => toggleWatchlist(selectedMovie)} className="flex items-center justify-center gap-2 rounded bg-zinc-800/80 backdrop-blur px-8 py-3 text-xl font-bold text-white transition hover:bg-zinc-700">{selectedMovie.watchlist ? "✓ " + t.inWatchlist : "+ " + t.toWatch}</button>}
               
-              {!isWeb && (
+              {!isWeb && isHost && (
                 <button disabled={isConverting} onClick={convertToX264} className={`flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border ${isConverting ? 'bg-blue-600/50 border-blue-500 cursor-not-allowed' : 'bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/40 hover:border-blue-400'}`}>
                   {isConverting ? "⏳ Çevriliyor..." : "🔄 Web İçin Optimize Et (x264)"}
                 </button>
