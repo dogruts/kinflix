@@ -92,7 +92,6 @@ const generateRoomCode = () => {
   return result;
 };
 
-// YENİ: Windows/Unix Path Normalizasyonu (Aynı klasörü farklı slashtan silmesin diye)
 const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
 
 function App() {
@@ -383,7 +382,6 @@ function App() {
   };
   const handleSaveToken = async (val: string) => { setTmdbToken(val); if(!isWeb) await setSetting("tmdb_token", val); };
 
-  // YENİ: Yarış durumunu (Race Condition) kıran Timeout ile güvenli kapatma
   const disconnectParty = () => {
     if (connRef.current) { connRef.current.close(); connRef.current = null; }
     if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
@@ -402,7 +400,6 @@ function App() {
       setTargetAddress("");
     } 
     
-    // Sistem destroy async döngüsünden çıkana kadar nefes alma mühleti
     setTimeout(() => {
       initPeerHost(); 
     }, 500);
@@ -419,7 +416,6 @@ function App() {
     } catch (error) { setError(String(error)); }
   }
 
-  // YENİ: Windows Path Normalizasyonu yapıldı (E:/Movies ile E:/Movies/ farkı bitti)
   async function scanFolder(path: string) {
     if (isWeb) return;
     setScanning(true); setError(null);
@@ -439,7 +435,6 @@ function App() {
     } catch (error) { setError(String(error)); } finally { setScanning(false); }
   }
 
-  // YENİ: 1045 Film için Rate Limit Batching (5'erli grup, Hata raporlamalı)
   async function syncMovieMetadata() {
     if (syncing || isWeb) return;
     if (!tmdbToken) { setIsSettingsOpen(true); return; }
@@ -466,7 +461,6 @@ function App() {
           }
         }));
         
-        // 5 filmlik paket sonrası rate limit dinlenmesi
         if (i + batchSize < storedMovies.length) {
           await new Promise(r => setTimeout(r, 400));
         }
@@ -1044,7 +1038,6 @@ function App() {
     
     setOsResults([]); setOsError(null); setSelectedMovie(movieToPlay); setIsPlaying(true); setIsVideoPlaying(true); setPlaybackSpeed(1);
     
-    // YENİ: captureStream için 1.5 saniyelik kör bekleyiş bitti! Doğrudan "playing" eventini dinliyor
     if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.current === 'connected') {
       const handlePlaying = () => {
         if (connRef.current && videoRef.current && peerRef.current) {
@@ -1055,7 +1048,6 @@ function App() {
         videoRef.current?.removeEventListener('playing', handlePlaying);
       };
       
-      // Video componentinin yerleşmesi için ufacık bir nefes (50ms) verip dinleyiciyi takıyoruz
       setTimeout(() => {
         videoRef.current?.addEventListener('playing', handlePlaying);
       }, 50);
@@ -1370,7 +1362,6 @@ function App() {
               <div className="w-48 flex flex-col items-center justify-center border-l border-zinc-800 pl-8">
                  <h3 className="text-sm font-bold text-zinc-400 mb-4 text-center">Telefondan Katıl</h3>
                  <div className="bg-white p-2 rounded-xl">
-                   {/* YENİ: NETLIFY ADRESİ EKLENDİ */}
                    <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent('https://kinflix.netlify.app/?room=' + peerId)}`} alt="Kinflix QR" className="w-32 h-32" />
                  </div>
                  <p className="text-xs text-zinc-500 mt-4 text-center">Kameranı okutarak anında odaya gir.</p>
@@ -1520,11 +1511,21 @@ function App() {
             className="h-full w-full object-contain cursor-pointer"
           >
             {activeSubIndex >= 0 && localSubs[activeSubIndex] && (
-              <track key={localSubs[activeSubIndex].url} src={localSubs[activeSubIndex].url} kind="subtitles" srcLang={localSubs[activeSubIndex].label.includes("Türkçe") ? "tr" : "en"} label={localSubs[activeSubIndex].label} default />
+              <track 
+                key={localSubs[activeSubIndex].url} 
+                src={localSubs[activeSubIndex].url} 
+                kind="subtitles" 
+                srcLang={localSubs[activeSubIndex].label.includes("Türkçe") ? "tr" : "en"} 
+                label={localSubs[activeSubIndex].label} 
+                default 
+                onLoad={(e) => {
+                  const trk = (e.currentTarget as HTMLTrackElement).track;
+                  if (trk) trk.mode = "showing";
+                }}
+              />
             )}
           </video>
 
-          {/* YENİ: WebRTC Canlı Yayın Bekleme / Yüklenme Animasyonu */}
           {isRemoteStreaming && connMode === 'webrtc' && !remoteStream && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-none">
               <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4 shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
@@ -1747,7 +1748,8 @@ function App() {
         </div>
       )}
 
-      {(!isWeb && !isTV) && (
+      {/* YENİ: Web ve TV misafirlerine kütüphaneyi başarıyla açan kırılmaz render koşulu */}
+      {(partyStatus === 'connected' || (!isWeb && !isTV)) && (
         <main className="flex-1 pb-10">
           {error && <div className="mx-10 mb-6 rounded-xl border border-red-900 bg-red-950/30 p-4 text-red-400">Hata: {error}</div>}
           {movies.length === 0 && !scanning && !syncing ? (
