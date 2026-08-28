@@ -271,9 +271,27 @@ pub fn run() {
             scan_movies,
             get_local_subtitles,
             read_text_file,
+            convert_to_x264,
             get_local_ip,
             start_tunnel
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// FFmpeg kullanarak videoyu x264 MP4 formatına çeviren komut
+#[tauri::command]
+async fn convert_to_x264(video_path: String) -> Result<String, String> {
+    let output_path = video_path.replace(".mkv", "_web.mp4").replace(".mp4", "_web.mp4").replace(".avi", "_web.mp4");
+    
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-i", &video_path, "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-c:a", "aac", &output_path])
+        .status()
+        .map_err(|e| format!("FFmpeg çalıştırılamadı. Bilgisayarında FFmpeg yüklü mü? Hata: {}", e))?;
+
+    if status.success() {
+        Ok(output_path)
+    } else {
+        Err("Dönüştürme işlemi başarısız oldu.".to_string())
+    }
 }

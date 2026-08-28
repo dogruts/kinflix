@@ -15,41 +15,41 @@ import MovieCard from "./components/MovieCard";
 
 const dict = {
   tr: {
-    home: "Ana Sayfa", library: "Tüm Filmler", watchlistTab: "İzlenecekler", sync: "TMDB Güncelle", addLib: "+ Kütüphane Ekle",
+    home: "Ana Sayfa", library: "Tüm Filmler", collections: "Koleksiyonlar", watchlistTab: "İzlenecekler", sync: "TMDB Güncelle", addLib: "+ Kütüphane Ekle",
     syncing: "Eşitleniyor...", scanning: "Taranıyor...", settings: "Ayarlar",
     emptyLib: "Kütüphanen Bomboş", clickToStart: "Başlamak İçin Tıkla", emptyWatchlist: "İzlenecekler listeniz şu an boş.",
     continue: "Kaldığın Yerden Devam Et", newReleases: "Yeni Çıkanlar", topRated: "En Yüksek Puanlılar",
     watchlist: "İzlenecekler Listem", toWatch: "Sonra İzle", inWatchlist: "Listede",
     search: "Film Ara...", allGenres: "Tüm Türler", sort: "Sırala",
     sortAZ: "A - Z", sortNew: "En Yeni Yıl", sortRating: "En Yüksek Puan",
-    play: "Oynat", resume: "Devam Et", info: "ⓘ Daha Fazla Bilgi",
+    play: "Oynat", resume: "Devam Et", info: "ⓘ Daha Fazla Bilgi", similar: "Benzer Filmler",
     noOverview: "Bu film için herhangi bir özet bulunamadı.",
     apiToken: "TMDB API Token", libCount: "Kütüphaneler", remove: "KALDIR",
     dangerZone: "Tehlikeli Bölge", resetDb: "Veritabanını Sıfırla",
-    language: "Arayüz Dili", subs: "Altyazılar", subOff: "Kapalı",
+    language: "Arayüz Dili", subs: "Altyazılar", subOff: "Kapalı", searchSubTr: "Altyazı (TR)", searchSubEn: "Altyazı (EN)",
     party: "Party Watch", joinLabel: "Odaya Katıl (Kod veya IP):", connect: "Bağlan", connected: "Bağlantı Başarılı!", disconnected: "Bağlı Değil",
     random: "🎲 Rastgele", chatMsg: "Mesaj yaz...", send: "Gönder"
   },
   en: {
-    home: "Home", library: "All Movies", watchlistTab: "Watchlist", sync: "Sync TMDB", addLib: "+ Add Library",
+    home: "Home", library: "All Movies", collections: "Collections", watchlistTab: "Watchlist", sync: "Sync TMDB", addLib: "+ Add Library",
     syncing: "Syncing...", scanning: "Scanning...", settings: "Settings",
     emptyLib: "Your Library is Empty", clickToStart: "Click to Start", emptyWatchlist: "Your watchlist is empty.",
     continue: "Continue Watching", newReleases: "New Releases", topRated: "Top Rated",
     watchlist: "My Watchlist", toWatch: "Watch Later", inWatchlist: "In Watchlist",
     search: "Search Movies...", allGenres: "All Genres", sort: "Sort By",
     sortAZ: "A - Z", sortNew: "Newest", sortRating: "Highest Rated",
-    play: "Play", resume: "Resume", info: "ⓘ More Info",
+    play: "Play", resume: "Resume", info: "ⓘ More Info", similar: "Similar Movies",
     noOverview: "No overview found for this movie.",
     apiToken: "TMDB API Token", libCount: "Libraries", remove: "REMOVE",
     dangerZone: "Danger Zone", resetDb: "Reset Database",
-    language: "Interface Language", subs: "Subtitles", subOff: "Off",
+    language: "Interface Language", subs: "Subtitles", subOff: "Off", searchSubTr: "Search Sub (TR)", searchSubEn: "Search Sub (EN)",
     party: "Party Watch", joinLabel: "Join Room (Code or IP):", connect: "Connect", connected: "Connected!", disconnected: "Disconnected",
     random: "🎲 Random", chatMsg: "Type a message...", send: "Send"
   }
 };
 
 type SortOption = "title_asc" | "year_desc" | "rating_desc";
-type TabState = "home" | "library" | "watchlist";
+type TabState = "home" | "library" | "collections" | "watchlist";
 type Lang = "tr" | "en";
 type SubtitleTrack = { id: string; url: string; label: string; srtContent: string; offset: number; originalPath?: string };
 
@@ -71,7 +71,6 @@ const shuffleArray = <T,>(array: T[]): T[] => {
   return newArr;
 };
 
-// OFFLINE LOKAL IP KODLAYICI
 const generateLocalShortCode = (ip: string) => {
   if (!ip) return "";
   const parts = ip.split('.');
@@ -140,12 +139,21 @@ function App() {
   
   const [isMicActive, setIsMicActive] = useState(false);
   const localMicStreamRef = useRef<MediaStream | null>(null);
+  
+  const [isConverting, setIsConverting] = useState(false);
 
   const isHostRef = useRef(!isWeb);
   const partyStatusRef = useRef<"disconnected" | "connected">("disconnected");
   const connModeRef = useRef<"none" | "webrtc" | "ip">("none");
   const targetAddressRef = useRef("");
   const localIpRef = useRef("");
+  
+  const moviesRef = useRef<Movie[]>([]);
+  useEffect(() => { moviesRef.current = movies; }, [movies]);
+
+  // YENİ: Anlık oynatılan filmi referans olarak tutuyoruz ki refresh atana yollayalım
+  const selectedMovieRef = useRef<Movie | null>(null);
+  useEffect(() => { selectedMovieRef.current = selectedMovie; }, [selectedMovie]);
 
   const peerRef = useRef<Peer | null>(null);
   const connRef = useRef<DataConnection | null>(null); 
@@ -210,6 +218,15 @@ function App() {
     }).filter(g => g.movies.length > 0);
   }, [movies, allGenres]);
 
+  const similarMovies = useMemo(() => {
+    if (!selectedMovie) return [];
+    return movies.filter(m => 
+      m.video_path !== selectedMovie.video_path && 
+      m.genres && selectedMovie.genres && 
+      m.genres.split(", ").some(g => selectedMovie.genres?.includes(g))
+    ).sort(() => 0.5 - Math.random()).slice(0, 15);
+  }, [selectedMovie, movies]);
+
   const userStats = useMemo(() => {
     const watched = movies.filter(m => m.is_watched === 1);
     const totalTime = watched.reduce((acc, m) => acc + (m.runtime || 0), 0);
@@ -232,17 +249,6 @@ function App() {
   }, [heroMovies, activeTab, isPlaying, selectedMovie]);
 
   const heroMovie = heroMovies[heroIndex] || movies[0];
-
-  useEffect(() => {
-    if (isWeb) {
-      const params = new URLSearchParams(window.location.search);
-      const roomCode = params.get('room');
-      if (roomCode) {
-        setTargetAddress(roomCode);
-        connectParty(roomCode);
-      }
-    }
-  }, []);
 
   useEffect(() => {
     const handleTvRemote = (e: KeyboardEvent) => {
@@ -285,10 +291,30 @@ function App() {
 
           const storedMovies = await getMovies();
           setMovies(storedMovies);
-          initPeerHost(storedMovies);
+          initPeerHost();
         } catch (error) { setError(String(error)); }
       } else {
-        initPeerHost([]);
+        const savedLang = localStorage.getItem("kinflix_language");
+        if (savedLang) setLang(savedLang as Lang);
+        initPeerHost();
+        
+        // YENİ: OTURUM HAFIZASI VE OTOMATİK BAĞLANMA (F5 Koruması)
+        const params = new URLSearchParams(window.location.search);
+        const roomCode = params.get('room');
+        if (roomCode) {
+          setTargetAddress(roomCode);
+          connectParty(roomCode);
+        } else {
+          const sessionStr = localStorage.getItem("kinflix_last_session");
+          if (sessionStr) {
+            const { target, time } = JSON.parse(sessionStr);
+            if (Date.now() - time < 1000 * 60 * 60 * 3) { // 3 saatlik oturum ömrü
+              console.log("Kinflix: Eski oturum kurtarılıyor...", target);
+              setTargetAddress(target);
+              connectParty(target);
+            }
+          }
+        }
       }
 
       const savedChat = localStorage.getItem("kinflix_chat_history");
@@ -334,8 +360,12 @@ function App() {
     } catch (err) { alert("Güncelleme yüklenemedi: " + err); setIsUpdating(false); }
   };
 
+  const handleSaveLang = async (val: Lang) => { 
+    setLang(val); 
+    if(!isWeb) await setSetting("language", val); 
+    else localStorage.setItem("kinflix_language", val); 
+  };
   const handleSaveToken = async (val: string) => { setTmdbToken(val); if(!isWeb) await setSetting("tmdb_token", val); };
-  const handleSaveLang = async (val: Lang) => { setLang(val); if(!isWeb) await setSetting("language", val); };
 
   async function chooseFolder() {
     if (isWeb) return;
@@ -396,6 +426,23 @@ function App() {
     setSelectedMovie(randomMovie);
   };
 
+ // YENİ: x264 ÇEVİRİ FONKSİYONU
+  const convertToX264 = async () => {
+    if (!selectedMovie || isWeb) return;
+    setIsConverting(true);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      alert("Dönüştürme başladı. Bu işlem bilgisayarının hızına göre 10-20 dakika sürebilir. Arka planda devam ediyor.");
+      const newPath = await invoke<string>("convert_to_x264", { videoPath: selectedMovie.video_path });
+      // newPath'i burada kullanarak TypeScript'in uyarısını susturuyoruz
+      alert(`✅ Çeviri Tamamlandı!\nYeni Dosya: ${newPath}\nKütüphaneyi yeniden tara (Klasör ekler gibi aynı klasörü tekrar seç).`);
+    } catch (err) {
+      alert("❌ Hata: " + err);
+    } finally {
+      setIsConverting(false);
+    }
+  };
+
   const parseSubtitle = (content: string, offsetSeconds: number = 0) => {
     let isVtt = content.trim().startsWith("WEBVTT");
     let vtt = "WEBVTT\n\n";
@@ -443,7 +490,7 @@ function App() {
     });
   };
 
-  const searchStremioSubtitles = async () => {
+  const searchStremioSubtitles = async (targetLang: "tur" | "eng") => {
     if (!selectedMovie) return;
     setIsSearchingOS(true);
     setOsError(null);
@@ -466,7 +513,6 @@ function App() {
       const subData = await subRes.json();
 
       if (subData.subtitles && subData.subtitles.length > 0) {
-        const targetLang = lang === "tr" ? "tur" : "eng";
         const filtered = subData.subtitles.filter((s:any) => s.lang === targetLang);
         if(filtered.length === 0) { setOsError(`Altyazı bulunamadı.`); setOsResults([]); } 
         else { setOsResults(filtered.slice(0, 10)); }
@@ -555,61 +601,92 @@ function App() {
     }
   };
 
-  const handleIncomingNetworkData = async (data: any, isHostMode: boolean) => {
-    if (data.action === "network_info" && !isHostMode && connModeRef.current === 'webrtc') {
-      const hostIp = data.localIp;
-      if (hostIp && hostIp !== "Bilinmiyor") {
-        const httpBaseUrl = `http://${hostIp}:8765`;
-        fetch(`${httpBaseUrl}/movies`, { cache: "no-store" }).then(res => {
-          if (res.ok) {
-            console.log("🔥 Kinflix Zekası: Aynı evde bulunuldu! WebRTC kapatılıp Yerel Ağa geçiliyor...");
-            connectWebSocket(hostIp);
-          }
-        }).catch(() => {});
+  const networkHandlerRef = useRef<Function | null>(null);
+  
+  useEffect(() => {
+    networkHandlerRef.current = async (data: any) => {
+      const hostMode = isHostRef.current;
+      
+      if (data.action === "network_info" && !hostMode && connModeRef.current === 'webrtc') {
+        const hostIp = data.localIp;
+        if (hostIp && hostIp !== "Bilinmiyor") {
+          const httpBaseUrl = `http://${hostIp}:8765`;
+          fetch(`${httpBaseUrl}/movies`, { cache: "no-store" }).then(res => {
+            if (res.ok) {
+              console.log("🔥 Kinflix Zekası: Aynı evde bulunuldu! WebRTC kapatılıp Yerel Ağa geçiliyor...");
+              connectWebSocket(hostIp);
+            }
+          }).catch(() => {});
+        }
       }
-    }
-    else if (data.action === "chat_msg") {
-      const receivedMsg = data.msg as ChatMessage;
-      receivedMsg.sender = "peer"; 
-      saveChatMessage(receivedMsg);
-      if (!isChatOpenRef.current) setUnreadCount(prev => prev + 1);
-    }
-    else if (data.action === "chat_reaction") {
-      setChatMessages(prev => {
-        const newChat = prev.map(m => {
-          if (m.id === data.msgId) {
-            const reactions = { ...(m.reactions || {}) };
-            reactions[data.emoji] = (reactions[data.emoji] || 0) + 1;
-            return { ...m, reactions };
-          }
-          return m;
+      else if (data.action === "request_catalog" && hostMode) {
+        broadcastEvent("catalog", { catalog: moviesRef.current });
+        
+        // YENİ: REFRESH ATANI SONRADAN EŞİTLEME ZEKASI (LATE-JOIN SYNC)
+        if (selectedMovieRef.current) {
+           console.log("Yeni misafir geldi, oynatılan filme eşitleniyor...");
+           broadcastEvent("load", { movie: selectedMovieRef.current });
+           setTimeout(() => {
+              if (videoRef.current) {
+                 broadcastEvent("seek", { time: videoRef.current.currentTime });
+                 broadcastEvent(videoRef.current.paused ? "pause" : "play", { time: videoRef.current.currentTime });
+              }
+           }, 800); // Misafirin oynatıcıyı açması için 800ms süre tanı
+        }
+      }
+      else if (data.action === "catalog" && !hostMode) {
+        setMovies(data.catalog);
+      }
+      else if (data.action === "request_movie" && hostMode) {
+        startPlayer(data.movie);
+      }
+      else if (data.action === "load" && !hostMode) { 
+        setSelectedMovie(data.movie); setIsPlaying(true); setIsRemoteStreaming(true); 
+      }
+      else if (data.action === "chat_msg") {
+        const receivedMsg = data.msg as ChatMessage;
+        receivedMsg.sender = "peer"; 
+        saveChatMessage(receivedMsg);
+        if (!isChatOpenRef.current) setUnreadCount(prev => prev + 1);
+      }
+      else if (data.action === "chat_reaction") {
+        setChatMessages(prev => {
+          const newChat = prev.map(m => {
+            if (m.id === data.msgId) {
+              const reactions = { ...(m.reactions || {}) };
+              reactions[data.emoji] = (reactions[data.emoji] || 0) + 1;
+              return { ...m, reactions };
+            }
+            return m;
+          });
+          localStorage.setItem("kinflix_chat_history", JSON.stringify(newChat));
+          return newChat;
         });
-        localStorage.setItem("kinflix_chat_history", JSON.stringify(newChat));
-        return newChat;
-      });
-    }
-    else if (data.action === "voice_chat_closed") { if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null; }
-    else if (data.action === "catalog" && !isHostMode) setMovies(data.catalog);
-    else if (data.action === "request_movie" && isHostMode) startPlayer(data.movie);
-    else if (data.action === "load" && !isHostMode) { setSelectedMovie(data.movie); setIsPlaying(true); setIsRemoteStreaming(true); }
-    else if (data.action === "sync_subs" && !isHostMode) {
-      const guestSubs = data.subs.map((sub: any) => { const vttUrl = parseSubtitle(sub.srtContent, sub.offset); return { ...sub, url: vttUrl }; });
-      setLocalSubs(guestSubs); setActiveSubIndex(data.activeIndex);
-    }
-    else if (data.action === "change_sub_index" && !isHostMode) { setActiveSubIndex(data.activeIndex); }
-    else if (data.action === "rate_change" && !isHostMode) {
-      if (videoRef.current) videoRef.current.playbackRate = data.rate;
-      setPlaybackSpeed(data.rate);
-    }
-    else if (videoRef.current && !isHostMode) { 
-      if (data.action === "play") { videoRef.current.currentTime = data.time; videoRef.current.play().catch(()=>{}); setIsVideoPlaying(true); } 
-      else if (data.action === "pause") { videoRef.current.currentTime = data.time; videoRef.current.pause(); setIsVideoPlaying(false); } 
-      else if (data.action === "seek") { videoRef.current.currentTime = data.time; setCurrentTime(data.time); }
-    }
-  };
+      }
+      else if (data.action === "voice_chat_closed") { if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null; }
+      else if (data.action === "sync_subs" && !hostMode) {
+        const guestSubs = data.subs.map((sub: any) => { const vttUrl = parseSubtitle(sub.srtContent, sub.offset); return { ...sub, url: vttUrl }; });
+        setLocalSubs(guestSubs); setActiveSubIndex(data.activeIndex);
+      }
+      else if (data.action === "change_sub_index" && !hostMode) { setActiveSubIndex(data.activeIndex); }
+      else if (data.action === "rate_change" && !hostMode) {
+        if (videoRef.current) videoRef.current.playbackRate = data.rate;
+        setPlaybackSpeed(data.rate);
+      }
+      else if (videoRef.current && !hostMode) { 
+        if (data.action === "play") { videoRef.current.currentTime = data.time; videoRef.current.play().catch(()=>{}); setIsVideoPlaying(true); } 
+        else if (data.action === "pause") { videoRef.current.currentTime = data.time; videoRef.current.pause(); setIsVideoPlaying(false); } 
+        else if (data.action === "seek") { videoRef.current.currentTime = data.time; setCurrentTime(data.time); }
+      }
+    };
+  });
 
   const connectParty = (target: string) => {
-    // YENİ: Odaya girince chat'i sıfırla
+    // YENİ: Bağlanılan odayı 3 saatliğine hafızaya al
+    if (!isHostRef.current) {
+      localStorage.setItem("kinflix_last_session", JSON.stringify({ target, time: Date.now() }));
+    }
+    
     setChatMessages([]);
     localStorage.removeItem("kinflix_chat_history");
 
@@ -620,18 +697,21 @@ function App() {
       if (target.startsWith("9")) {
         const val = parseInt(target.slice(1));
         const ip = `192.168.${Math.floor(val / 256)}.${val % 256}`;
-        setConnMode("ip"); connectWebSocket(ip); return;
+        setConnMode("ip"); connModeRef.current = "ip";
+        connectWebSocket(ip); return;
       } else if (target.startsWith("8")) {
         const val = parseInt(target.slice(1));
         const ip = `10.0.${Math.floor(val / 256)}.${val % 256}`;
-        setConnMode("ip"); connectWebSocket(ip); return;
+        setConnMode("ip"); connModeRef.current = "ip";
+        connectWebSocket(ip); return;
       }
     }
 
     if (isIp) { 
-      setConnMode("ip"); connectWebSocket(target); 
+      setConnMode("ip"); connModeRef.current = "ip";
+      connectWebSocket(target); 
     } else { 
-      setConnMode("webrtc"); 
+      setConnMode("webrtc"); connModeRef.current = "webrtc";
       const targetId = target.length === 4 && !isNaN(Number(target)) ? `kinflix-${target}` : target;
       connectPeerJS(targetId); 
     }
@@ -641,8 +721,23 @@ function App() {
     if (!peerRef.current) return;
     const conn = peerRef.current.connect(targetId);
     connRef.current = conn;
-    conn.on('open', () => { setPartyStatus("connected"); setIsHost(false); setIsPartyMenuOpen(false); });
-    conn.on('data', (data) => handleIncomingNetworkData(data, false));
+    
+    conn.on('open', () => { 
+      setPartyStatus("connected"); partyStatusRef.current = "connected";
+      setIsHost(false); isHostRef.current = false;
+      setIsPartyMenuOpen(false); 
+      
+      setTimeout(() => {
+        if (connRef.current?.open) {
+          connRef.current.send({ action: "request_catalog" });
+        }
+      }, 500);
+    });
+    
+    conn.on('data', (data) => {
+      if (networkHandlerRef.current) networkHandlerRef.current(data);
+    });
+    
     peerRef.current.on('call', (call) => {
       if (call.metadata?.type === 'voice_chat') {
         call.answer();
@@ -658,21 +753,35 @@ function App() {
   const connectWebSocket = async (address: string) => {
     if (wsRef.current) wsRef.current.close();
     const hostStatus = (address === localIp || address === "127.0.0.1") && !isWeb; 
-    setIsHost(hostStatus);
+    
+    setIsHost(hostStatus); isHostRef.current = hostStatus;
+    
     let wsUrl = address.startsWith("http") ? address.replace("http://", "ws://").replace("https://", "wss://") + "/ws" : `ws://${address}:8765/ws`;
-    let httpBaseUrl = address.startsWith("http") ? address : `http://${address}:8765`;
-    if (!hostStatus) {
-      try { const res = await fetch(`${httpBaseUrl}/movies`); const remoteMovies: Movie[] = await res.json(); setMovies(remoteMovies); } catch (err) {}
-    }
+    
     const ws = new WebSocket(wsUrl);
-    ws.onopen = () => { setPartyStatus("connected"); setTargetAddress(address); setIsPartyMenuOpen(false); };
-    ws.onmessage = (e) => { try { const data = JSON.parse(e.data); handleIncomingNetworkData(data, hostStatus); } catch(err) {} };
+    ws.onopen = () => { 
+      setPartyStatus("connected"); partyStatusRef.current = "connected";
+      setTargetAddress(address); 
+      setIsPartyMenuOpen(false); 
+      
+      setTimeout(() => {
+        if (!hostStatus && wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ action: "request_catalog" }));
+        }
+      }, 500);
+    };
+    
+    ws.onmessage = (e) => { 
+      try { 
+        const data = JSON.parse(e.data); 
+        if (networkHandlerRef.current) networkHandlerRef.current(data); 
+      } catch(err) {} 
+    };
     ws.onclose = () => setPartyStatus("disconnected");
     wsRef.current = ws;
   };
 
-  const initPeerHost = (currentMovies: Movie[]) => {
-    // YENİ: Oda kurarken de chat'i sıfırla
+  const initPeerHost = () => {
     setChatMessages([]);
     localStorage.removeItem("kinflix_chat_history");
 
@@ -684,18 +793,24 @@ function App() {
     peer.on('open', (id) => { setPeerId(isWeb ? id : shortCode); });
     
     peer.on('connection', (conn) => {
-      setPartyStatus("connected"); setConnMode("webrtc"); connRef.current = conn; 
+      setPartyStatus("connected"); partyStatusRef.current = "connected";
+      setConnMode("webrtc"); connModeRef.current = "webrtc";
+      connRef.current = conn; 
+      
       if (!isWeb) {
-        setIsHost(true);
+        setIsHost(true); isHostRef.current = true;
         conn.on('open', () => { 
-          conn.send({ action: "catalog", catalog: currentMovies }); 
           if (localIpRef.current && localIpRef.current !== "Bilinmiyor") {
              conn.send({ action: "network_info", localIp: localIpRef.current });
           }
         });
       }
-      conn.on('data', (data) => handleIncomingNetworkData(data, !isWeb));
+      
+      conn.on('data', (data) => {
+        if (networkHandlerRef.current) networkHandlerRef.current(data);
+      });
     });
+    
     peer.on('call', (call) => {
       if (call.metadata?.type === 'voice_chat') {
         call.answer();
@@ -711,8 +826,11 @@ function App() {
   };
 
   const handleMovieClick = (movie: Movie) => {
-    if (!isHostRef.current && partyStatusRef.current === 'connected') { broadcastEvent("request_movie", { movie }); } 
-    else { setSelectedMovie(movie); }
+    if (!isHostRef.current && partyStatusRef.current === 'connected') { 
+      broadcastEvent("request_movie", { movie }); 
+    } else { 
+      setSelectedMovie(movie); 
+    }
   };
 
   const [tauriConvertFileSrc, setTauriConvertFileSrc] = useState<any>(null);
@@ -731,13 +849,12 @@ function App() {
     return tauriConvertFileSrc(selectedMovie.video_path);
   };
 
-  // YENİ: Siyah Ekran ve Auto-Play Çözümü
   useEffect(() => {
     if (videoRef.current && isRemoteStreaming && connModeRef.current === 'webrtc' && remoteStream) {
-      videoRef.current.src = ""; // Tarayıcının karışmasını önler
+      videoRef.current.src = ""; 
       videoRef.current.srcObject = remoteStream;
       videoRef.current.play().catch(e => {
-        console.log("Otomatik oynatma engellendi, kullanıcı tıklaması bekleniyor:", e);
+        console.log("Otomatik oynatma engellendi, tıklama bekleniyor:", e);
         setIsVideoPlaying(false);
       });
     }
@@ -748,7 +865,9 @@ function App() {
     if (!movieToPlay) return;
     setIsRemoteStreaming(false);
 
-    if (isHostRef.current && partyStatusRef.current === 'connected') { broadcastEvent("load", { movie: movieToPlay }); }
+    if (isHostRef.current && partyStatusRef.current === 'connected') { 
+      broadcastEvent("load", { movie: movieToPlay }); 
+    }
 
     if (!isWeb) {
       try {
@@ -983,6 +1102,7 @@ function App() {
           <nav className="hidden gap-6 text-sm font-semibold md:flex items-center">
             <button onClick={() => setActiveTab("home")} className={`transition hover:text-zinc-300 ${activeTab === "home" ? "text-white" : "text-zinc-500"}`}>{t.home}</button>
             <button onClick={() => setActiveTab("library")} className={`transition hover:text-zinc-300 ${activeTab === "library" ? "text-white" : "text-zinc-500"}`}>{t.library}</button>
+            <button onClick={() => setActiveTab("collections")} className={`transition hover:text-zinc-300 ${activeTab === "collections" ? "text-white" : "text-zinc-500"}`}>{t.collections}</button>
             <button onClick={() => setActiveTab("watchlist")} className={`transition hover:text-zinc-300 ${activeTab === "watchlist" ? "text-white" : "text-zinc-500"}`}>{t.watchlistTab}</button>
             <button onClick={playRandomMovie} className="ml-4 flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-900/80 px-4 py-1.5 text-xs font-bold text-white transition hover:bg-zinc-800 hover:scale-105">
               {t.random}
@@ -1003,7 +1123,7 @@ function App() {
         </div>
       </header>
 
-      {/* HOST MENÜSÜ (AĞ BİLGİLERİ VE KODLARI) */}
+      {/* HOST MENÜSÜ */}
       {isPartyMenuOpen && !isWeb && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
           <div className="w-full max-w-3xl rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 flex gap-8">
@@ -1077,7 +1197,7 @@ function App() {
         </div>
       )}
 
-      {/* SOHBET MENÜSÜ AÇMA BUTONU (SADECE WEB VE PC) */}
+      {/* SOHBET MENÜSÜ AÇMA BUTONU */}
       {!isTV && partyStatus === 'connected' && !isPlaying && (
         <button onClick={() => setIsChatOpen(!isChatOpen)} className="fixed bottom-8 right-8 z-[150] flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 shadow-2xl hover:scale-110 transition-transform text-2xl relative">
           💬
@@ -1157,7 +1277,6 @@ function App() {
             `}
           </style>
 
-          {/* YENİ: crossOrigin eklendi, siyah ekran engeli aşıldı */}
           <video
             ref={videoRef} 
             crossOrigin="anonymous" 
@@ -1261,7 +1380,12 @@ function App() {
                       <>
                         <div className="bg-zinc-800 px-4 py-2 mt-1 text-xs font-bold text-zinc-400 uppercase tracking-wider">İnternetten Bul (STREMIO)</div>
                         <div className="p-2">
-                          {osResults.length === 0 && !isSearchingOS && <button onClick={(e) => {e.stopPropagation(); searchStremioSubtitles()}} className="w-full rounded bg-red-600/20 py-2 text-sm font-bold text-red-500 hover:bg-red-600/40 transition">Altyazı Ara ({lang.toUpperCase()})</button>}
+                          {osResults.length === 0 && !isSearchingOS && (
+                            <div className="flex gap-2">
+                              <button onClick={(e) => {e.stopPropagation(); searchStremioSubtitles('tur')}} className="flex-1 rounded bg-red-600/20 py-2 text-xs font-bold text-red-500 hover:bg-red-600/40 transition">{t.searchSubTr}</button>
+                              <button onClick={(e) => {e.stopPropagation(); searchStremioSubtitles('eng')}} className="flex-1 rounded bg-blue-600/20 py-2 text-xs font-bold text-blue-500 hover:bg-blue-600/40 transition">{t.searchSubEn}</button>
+                            </div>
+                          )}
                           {isSearchingOS && <div className="text-center text-sm text-zinc-400 py-2">Stremio'da Aranıyor...</div>}
                           {osError && <div className="text-center text-xs text-red-500 py-2 font-bold bg-red-950/30 rounded mb-2">{osError}</div>}
                           {osResults.map((res: any) => {
@@ -1290,12 +1414,20 @@ function App() {
               <h2 className="text-3xl font-bold">⚙️ {t.settings}</h2>
               <button onClick={() => setIsSettingsOpen(false)} className="text-3xl text-zinc-500 hover:text-white">✕</button>
             </div>
+            
+            <div className="mb-6 flex items-center gap-4 border-b border-zinc-800 pb-6">
+              <h3 className="text-sm font-semibold text-zinc-400">{t.language}:</h3>
+              <select value={lang} onChange={(e) => handleSaveLang(e.target.value as Lang)} className="w-48 rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-2 text-white outline-none">
+                <option value="tr">Türkçe</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+
             {(!isHost && partyStatus === 'connected') || isWeb || isTV ? (
-              <div className="text-center py-10">
+              <div className="text-center py-6">
                 <h3 className="text-2xl font-bold text-white mb-4">Misafir Modundasınız 🎭</h3>
                 <p className="text-zinc-400 leading-relaxed max-w-md mx-auto">Oda kurucusunun (Host) kütüphanesini görüntülüyorsunuz. Bütün film verileri doğrudan Host'tan size aktarılıyor.<br/><br/>Arkanıza yaslanın ve filmin tadını çıkarın!</p>
                 
-                {/* YENİ: Web Müşterileri için de Sürüm Bilgisi */}
                 <div className="mt-8 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 max-w-xs mx-auto">
                   <h3 className="text-blue-500 font-bold mb-2">Sistem Durumu</h3>
                   <p className="text-sm text-zinc-300">Web arayüzü Vercel tarafından otomatik güncellenir.</p>
@@ -1303,15 +1435,9 @@ function App() {
               </div>
             ) : (
               <div className="space-y-6">
-                <div className="flex gap-4">
-                  <div className="flex-1">
-                    <h3 className="mb-2 text-sm font-semibold text-zinc-400">{t.language}</h3>
-                    <select value={lang} onChange={(e) => handleSaveLang(e.target.value as Lang)} className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none"><option value="tr">Türkçe</option><option value="en">English</option></select>
-                  </div>
-                  <div className="flex-[2]">
-                    <h3 className="mb-2 text-sm font-semibold text-zinc-400">{t.apiToken}</h3>
-                    <input type="password" value={tmdbToken} onChange={(e) => handleSaveToken(e.target.value)} placeholder="TMDB Read Access Token" className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none" />
-                  </div>
+                <div>
+                  <h3 className="mb-2 text-sm font-semibold text-zinc-400">{t.apiToken}</h3>
+                  <input type="password" value={tmdbToken} onChange={(e) => handleSaveToken(e.target.value)} placeholder="TMDB Read Access Token" className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none" />
                 </div>
                 <div>
                   <div className="mb-2 flex items-center justify-between"><h3 className="text-lg font-semibold text-zinc-300">{t.libCount} ({libraries.length})</h3><button onClick={chooseFolder} disabled={scanning} className="text-sm font-bold text-red-500 hover:text-red-400">{t.addLib}</button></div>
@@ -1322,7 +1448,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* YENİ: GÜNCELLEME KONTROL BUTONU EKLENDİ */}
                 <div className="mb-6 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4">
                   <h3 className="text-blue-500 font-bold mb-2">Masaüstü Güncellemeleri</h3>
                   <button onClick={forceUpdateCheck} className="rounded bg-blue-600 px-4 py-2 text-sm font-bold transition hover:bg-blue-700 text-white">
@@ -1356,7 +1481,15 @@ function App() {
                 <span className="text-2xl">▶</span> {selectedMovie.progress && (selectedMovie.is_watched || 0) === 0 && !isWeb ? t.resume : t.play}
               </button>
               {!isWeb && <button onClick={() => toggleWatchlist(selectedMovie)} className="flex items-center justify-center gap-2 rounded bg-zinc-800/80 backdrop-blur px-8 py-3 text-xl font-bold text-white transition hover:bg-zinc-700">{selectedMovie.watchlist ? "✓ " + t.inWatchlist : "+ " + t.toWatch}</button>}
+              
+              {/* YENİ: x264 OPTİMİZE ET BUTONU (SADECE HOST İÇİN) */}
+              {!isWeb && isHost && (
+                <button disabled={isConverting} onClick={convertToX264} className={`flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border ${isConverting ? 'bg-blue-600/50 border-blue-500 cursor-not-allowed' : 'bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/40 hover:border-blue-400'}`}>
+                  {isConverting ? "⏳ Çevriliyor..." : "🔄 Web İçin Optimize Et (x264)"}
+                </button>
+              )}
             </div>
+
             <div className="mt-10 flex flex-col md:flex-row gap-10">
               <div className="flex-[2]"><p className="text-lg leading-relaxed text-zinc-300">{selectedMovie.overview || t.noOverview}</p></div>
               <div className="flex-1 flex flex-col gap-3 text-sm">
@@ -1366,6 +1499,12 @@ function App() {
                 {selectedMovie.collection_name && <p><span className="text-zinc-500">Seri:</span> <span className="text-zinc-300">{selectedMovie.collection_name}</span></p>}
               </div>
             </div>
+            
+            {similarMovies.length > 0 && (
+              <div className="mt-16">
+                <MovieRow title={t.similar} data={similarMovies} />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1399,11 +1538,20 @@ function App() {
                   <div className="px-10">
                     <MovieRow title={t.continue} data={continueWatching} />
                     <MovieRow title={t.watchlist} data={watchListMovies} />
-                    {collections.map(item => <MovieRow key={item.name} title={`🎬 ${item.name}`} data={item.movies} />)}
                     <MovieRow title={t.newReleases} data={newReleases} />
                     <MovieRow title={t.topRated} data={topRated} />
                     {homeGenres.map(item => <MovieRow key={item.genre} title={`${item.genre}`} data={item.movies} />)}
                   </div>
+                </div>
+              )}
+              {activeTab === "collections" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <h2 className="mb-6 text-2xl font-bold">{t.collections}</h2>
+                  {collections.length === 0 ? <div className="text-zinc-500">Herhangi bir koleksiyon bulunamadı.</div> : (
+                    <div>
+                      {collections.map(item => <MovieRow key={item.name} title={`🎬 ${item.name}`} data={item.movies} />)}
+                    </div>
+                  )}
                 </div>
               )}
               {activeTab === "watchlist" && (
