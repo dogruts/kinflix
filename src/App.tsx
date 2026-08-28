@@ -875,13 +875,43 @@ const connectParty = (target: string) => {
       });
     });
     
-    peer.on('call', (call) => {
-      if (call.metadata?.type === 'voice_chat') {
-        call.answer();
-        call.on('stream', (audioStream) => { if (remoteAudioRef.current) { remoteAudioRef.current.srcObject = audioStream; remoteAudioRef.current.play().catch(()=>{}); } });
+peer.on('call', (call) => {
+  console.log("📞 INCOMING PEER CALL:", call.metadata);
+
+  // 🎬 MOVIE STREAM
+  if (call.metadata?.type === "movie") {
+    console.log("🎬 Incoming movie stream");
+
+    call.answer();
+
+    call.on("stream", (videoStream) => {
+      console.log("🎥 MOVIE STREAM RECEIVED");
+
+      _setRemoteStream(videoStream);
+      setIsRemoteStreaming(true);
+    });
+
+    call.on("error", (err) => {
+      console.error("🎬 MOVIE CALL ERROR:", err);
+    });
+
+    return;
+  }
+
+  // 🎤 VOICE CHAT
+  if (call.metadata?.type === "voice_chat") {
+    call.answer();
+
+    call.on("stream", (audioStream) => {
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = audioStream;
+        remoteAudioRef.current.play().catch(() => {});
       }
     });
-    peerRef.current = peer;
+
+    return;
+  }
+});
   };
 
   const broadcastEvent = (action: string, payload: any = {}) => {
