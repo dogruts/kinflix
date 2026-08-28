@@ -87,6 +87,7 @@ type SubtitleTrack = { id: string; url: string; label: string; srtContent: strin
 type ChatMessage = { 
   id: string; 
   sender: "me" | "peer"; 
+  author?: string; // YENİ
   type: "text" | "image"; 
   content: string; 
   timestamp: number;
@@ -226,6 +227,9 @@ function App() {
 
   const [toast, setToast] = useState<{text: string, icon: string} | null>(null);
   const toastTimer = useRef<number | null>(null);
+
+  const [guestName, setGuestName] = useState<string>(localStorage.getItem("kinflix_guest_name") || "");
+  const [showNameModal, setShowNameModal] = useState(false);
   
   const showToast = (text: string, icon: string = "🔔") => {
     setToast({text, icon});
@@ -655,7 +659,8 @@ function App() {
 
   const handleSendChatText = () => {
     if (!chatInput.trim()) return;
-    const msg: ChatMessage = { id: Date.now().toString(), sender: "me", type: "text", content: chatInput, timestamp: Date.now() };
+    const authorName = guestName || (isHost ? "Host" : "Misafir");
+const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: authorName, type: "text", content: chatInput, timestamp: Date.now() };
     saveChatMessage(msg);
     broadcastEvent("chat_msg", { msg });
     setChatInput("");
@@ -667,7 +672,8 @@ function App() {
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const base64 = ev.target?.result as string;
-      const msg: ChatMessage = { id: Date.now().toString(), sender: "me", type: "image", content: base64, timestamp: Date.now() };
+      const authorName = guestName || (isHost ? "Host" : "Misafir");
+      const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: authorName, type: "image", content: base64, timestamp: Date.now() };
       saveChatMessage(msg);
       broadcastEvent("chat_msg", { msg });
     };
@@ -878,6 +884,9 @@ function App() {
         setPartyStatus("connected"); partyStatusRef.current = "connected";
         setIsHost(false); isHostRef.current = false;
         setIsPartyMenuOpen(false); 
+        if (!localStorage.getItem("kinflix_guest_name")) {
+    setShowNameModal(true);
+  }
         
         setTimeout(() => {
           if (connRef.current?.open) {
@@ -917,7 +926,10 @@ function App() {
     ws.onopen = () => { 
       setPartyStatus("connected"); partyStatusRef.current = "connected";
       setTargetAddress(address); 
-      setIsPartyMenuOpen(false); 
+      setIsPartyMenuOpen(false);
+      if (!localStorage.getItem("kinflix_guest_name")) {
+    setShowNameModal(true);
+  } 
       
       setTimeout(() => {
         if (!hostStatus && wsRef.current?.readyState === WebSocket.OPEN) {
@@ -1104,17 +1116,22 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
         if (connRef.current && videoRef.current && peerRef.current) {
            if (callRef.current) { callRef.current.close(); }
            
-           try {
-             // YENİ: H265 Siyah Ekran donanım sınırını delmek için direkt Pencereyi/Sekmeyi yakalıyoruz
-// YENİ: TypeScript hatasını ezmek için "as any" eklendi
-             const stream = await navigator.mediaDevices.getDisplayMedia({
-               video: { displaySurface: "browser" },
-               audio: { suppressLocalAudioPlayback: false }
-             } as any);
-             callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
-           } catch (err) {
-             // Eğer ekran paylaşımını reddedersen (veya H264 izliyorsan) klasik metoda geri döner
-             console.log("Ekran paylaşımı reddedildi, klasik x264 captureStream kullanılıyor...");
+           // YENİ: Sadece dosya yolunda 265 veya hevc geçiyorsa akıllı ekran paylaşımını tetikle
+           const isHevcFile = /265|hevc/i.test(movieToPlay.video_path);
+
+           if (isHevcFile) {
+             try {
+               const stream = await navigator.mediaDevices.getDisplayMedia({
+                 video: { displaySurface: "browser" },
+                 audio: { suppressLocalAudioPlayback: false }
+               } as any);
+               callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
+             } catch (err) {
+               const stream = (videoRef.current as any).captureStream();
+               callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
+             }
+           } else {
+             // Normal h264 filmler arkadan sessiz sedasız akmaya devam eder
              const stream = (videoRef.current as any).captureStream();
              callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
            }
@@ -1382,7 +1399,16 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
                     <div className="bg-black rounded-lg p-2 text-4xl font-black tracking-widest text-green-400 border border-zinc-800">
                       {peerId || "..."}
                     </div>
-                    
+                    <div className="bg-black rounded-lg p-2 text-4xl font-black tracking-widest text-green-400 border border-zinc-800 flex justify-between items-center px-6">
+      <span>{peerId || "..."}</span>
+      {/* YENİ: Oda Kodunu Yenileme Butonu */}
+      <button onClick={() => {
+        localStorage.removeItem("kinflix_host_code");
+        window.location.reload();
+      }} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-2 rounded-lg font-bold border border-zinc-700 transition">
+        🔄 Kodu Değiştir
+      </button>
+    </div>
                     <h3 className="mt-4 mb-2 text-sm font-semibold text-zinc-400">Yerel IP (Aynı Ev / Wi-Fi İçin):</h3>
                     <div className="bg-black rounded-lg p-2 text-xl font-mono tracking-widest text-blue-400 border border-zinc-800 flex justify-between items-center px-4">
                       <span>{localIp || "Yükleniyor..."}</span>
@@ -1600,8 +1626,13 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
           
           <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-zinc-950">
             {chatMessages.map(msg => (
-              <div key={msg.id} className={`relative group max-w-[85%] rounded-xl p-2.5 text-sm shadow-md ${msg.sender === 'me' ? 'bg-blue-600 text-white self-end rounded-tr-sm' : 'bg-zinc-800 text-zinc-200 self-start rounded-tl-sm'}`}>
-                {msg.type === 'text' ? <p className="break-words">{msg.content}</p> : <img src={msg.content} className="rounded-lg w-full object-cover cursor-pointer hover:opacity-80 transition" onClick={async () => { if(!isWeb) { const { openUrl } = await import('@tauri-apps/plugin-opener'); openUrl(msg.content); } else { window.open(msg.content); } }} />}
+<div key={msg.id} className={`relative group max-w-[85%] rounded-xl p-2.5 text-sm shadow-md ${msg.sender === 'me' ? 'bg-blue-600 text-white self-end rounded-tr-sm' : 'bg-zinc-800 text-zinc-200 self-start rounded-tl-sm'}`}>
+                {/* YENİ: Mesajın üstünde gönderenin ismi */}
+                {msg.author && (
+                  <span className={`text-[10px] font-bold block mb-1 opacity-80 ${msg.sender === 'me' ? 'text-blue-200 text-right' : 'text-zinc-400 text-left'}`}>
+                    {msg.author}
+                  </span>
+                )}                {msg.type === 'text' ? <p className="break-words">{msg.content}</p> : <img src={msg.content} className="rounded-lg w-full object-cover cursor-pointer hover:opacity-80 transition" onClick={async () => { if(!isWeb) { const { openUrl } = await import('@tauri-apps/plugin-opener'); openUrl(msg.content); } else { window.open(msg.content); } }} />}
                 
                 {msg.reactions && Object.keys(msg.reactions).length > 0 && (
                   <div className="flex gap-1 mt-1.5 flex-wrap">
@@ -1885,7 +1916,39 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
           )}
         </main>
       )}
+      {showNameModal && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/90 backdrop-blur-md px-4">
+          <div className="w-full max-w-md rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 text-center">
+            <h2 className="text-2xl font-bold mb-2">👋 Adın Ne Kanka?</h2>
+            <p className="text-zinc-400 text-sm mb-6">Party chatte arkadaşının seni tanıyabilmesi için bir isim gir.</p>
+            <input 
+              type="text" placeholder="Örn: Tekin" 
+              onKeyDown={(e) => {
+                if(e.key === 'Enter' && (e.target as HTMLInputElement).value.trim()) {
+                  const name = (e.target as HTMLInputElement).value.trim();
+                  setGuestName(name);
+                  localStorage.setItem("kinflix_guest_name", name);
+                  setShowNameModal(false);
+                }
+              }}
+              className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-center text-lg text-white outline-none focus:border-red-600 transition mb-4" 
+            />
+            <button onClick={(e) => {
+              const input = (e.currentTarget.previousElementSibling as HTMLInputElement);
+              if(input && input.value.trim()) {
+                const name = input.value.trim();
+                setGuestName(name);
+                localStorage.setItem("kinflix_guest_name", name);
+                setShowNameModal(false);
+              }
+            }} className="w-full rounded-xl bg-red-600 py-3 font-bold hover:bg-red-700 transition">
+              Devam Et 🚀
+            </button>
+          </div>
+        </div>
+      )}
     </div>
+    
   );
 }
 
