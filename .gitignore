@@ -7,10 +7,30 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build
 dist
 dist-ssr
 *.local
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Tauri / Rust
+src-tauri/target/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Installers
+*.msi
+*.exe
 
 # Editor directories and files
 .vscode/*

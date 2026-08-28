@@ -1,0 +1,11 @@
+{
+  "version": "1.0.1",
+  "notes": "Yeni sesli sohbet ve PIP özellikleri eklendi!",
+  "pub_date": "2026-08-28T10:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "BURAYA_SIG_DOSYASININ_İÇİNDEKİ_YAZIYI_YAPIŞTIR",
+      "url": "https://twilight-bush-60ea.dogruts01.workers.dev/downloads/kinflix_0.1.0_x64-setup.exe"
+    }
+  }
+}
