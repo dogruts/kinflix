@@ -17,9 +17,12 @@ const MovieCardFallback = ({ movie }: { movie: Movie }) => (
     {movie.poster_url ? (
       <img src={movie.poster_url} alt={movie.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
     ) : (
-      <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800 p-4 text-center">
-        <span className="text-4xl mb-2 opacity-50">🎬</span>
-        <span className="text-zinc-400 text-xs font-bold uppercase tracking-widest leading-relaxed">Afiş<br/>Yok</span>
+      <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800 p-3 text-center">
+        <span className="text-4xl mb-3 opacity-50">🎬</span>
+        {/* YENİ: Afiş Yok yerine filmin adını gösteriyoruz */}
+        <span className="text-zinc-300 text-sm font-bold tracking-wider leading-snug px-1 line-clamp-3">
+          {movie.title}
+        </span>
       </div>
     )}
     <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-3">
@@ -31,9 +34,10 @@ const MovieCardFallback = ({ movie }: { movie: Movie }) => (
         </div>
       )}
     </div>
+    {/* YENİ: 0 yazma sorunu bitti, Netflix % stili yerine gerçek IMDB puanı */}
     {movie.rating != null && movie.rating > 0 && (
-      <div className="absolute top-2 right-2 bg-black/80 text-green-400 text-[10px] font-bold px-1.5 py-0.5 rounded border border-green-900/50 backdrop-blur shadow-xl z-10">
-        {Math.round(movie.rating * 10)}%
+      <div className="absolute top-2 right-2 bg-black/80 text-yellow-500 text-[11px] font-bold px-1.5 py-0.5 rounded border border-yellow-900/50 backdrop-blur shadow-xl z-10 flex items-center gap-1">
+        ⭐ {movie.rating.toFixed(1)}
       </div>
     )}
   </div>
@@ -1095,12 +1099,25 @@ function App() {
     
     setOsResults([]); setOsError(null); setSelectedMovie(movieToPlay); setIsPlaying(true); setIsVideoPlaying(true); setPlaybackSpeed(1);
     
-    if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.current === 'connected') {
-      const handlePlaying = () => {
+if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.current === 'connected') {
+      const handlePlaying = async () => {
         if (connRef.current && videoRef.current && peerRef.current) {
            if (callRef.current) { callRef.current.close(); }
-           const stream = (videoRef.current as any).captureStream();
-           callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
+           
+           try {
+             // YENİ: H265 Siyah Ekran donanım sınırını delmek için direkt Pencereyi/Sekmeyi yakalıyoruz
+// YENİ: TypeScript hatasını ezmek için "as any" eklendi
+             const stream = await navigator.mediaDevices.getDisplayMedia({
+               video: { displaySurface: "browser" },
+               audio: { suppressLocalAudioPlayback: false }
+             } as any);
+             callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
+           } catch (err) {
+             // Eğer ekran paylaşımını reddedersen (veya H264 izliyorsan) klasik metoda geri döner
+             console.log("Ekran paylaşımı reddedildi, klasik x264 captureStream kullanılıyor...");
+             const stream = (videoRef.current as any).captureStream();
+             callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
+           }
         }
         videoRef.current?.removeEventListener('playing', handlePlaying);
       };
@@ -1495,7 +1512,7 @@ function App() {
           <div className="relative z-10 -mt-56 max-w-5xl px-10 pb-20">
             <h1 className="text-5xl font-extrabold shadow-black drop-shadow-2xl md:text-7xl">{selectedMovie.title}</h1>
             <div className="mt-6 flex flex-wrap items-center gap-4 text-sm font-semibold text-zinc-300">
-              {selectedMovie.rating != null && selectedMovie.rating > 0 && <span className="flex items-center gap-1 text-green-400 font-bold text-base">{Math.round(selectedMovie.rating * 10)}% Eşleşme</span>}
+              {selectedMovie.rating != null && selectedMovie.rating > 0 && <span className="flex items-center gap-1 text-yellow-500 font-bold text-base">⭐ {selectedMovie.rating.toFixed(1)} IMDB</span>}
               {selectedMovie.year && <span>{selectedMovie.year}</span>}
               {selectedMovie.runtime && <span>{selectedMovie.runtime} dk</span>}
               <span className="rounded border border-zinc-500 px-1.5 py-0.5 text-xs text-zinc-300">HD</span>
