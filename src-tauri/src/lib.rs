@@ -234,6 +234,11 @@ fn start_tunnel() -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_sql::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|_app| {
             tauri::async_runtime::spawn(async {
                 let (tx, _rx) = broadcast::channel(100);
@@ -247,19 +252,24 @@ pub fn run() {
                     .with_state(app_state)
                     .layer(CorsLayer::permissive());
 
-                let listener = tokio::net::TcpListener::bind("0.0.0.0:8765").await.unwrap();
+                let listener = match tokio::net::TcpListener::bind("0.0.0.0:8765").await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        eprintln!("Sunucu başlatılamadı: {}", e);
+                        return;
+                    }
+                };
+
                 println!("🚀 Kinflix Sunucusu yayında: http://0.0.0.0:8765");
-                axum::serve(listener, app).await.unwrap();
+
+                let _ = axum::serve(listener, app).await;
             });
+
             Ok(())
         })
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_sql::Builder::default().build())
-        .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            scan_movies, 
-            get_local_subtitles, 
+            scan_movies,
+            get_local_subtitles,
             read_text_file,
             get_local_ip,
             start_tunnel

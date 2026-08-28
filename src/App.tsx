@@ -71,7 +71,7 @@ const shuffleArray = <T,>(array: T[]): T[] => {
   return newArr;
 };
 
-// YENİ: OFFLINE LOKAL IP KODLAYICI (192.168.1.5 -> 900261)
+// OFFLINE LOKAL IP KODLAYICI
 const generateLocalShortCode = (ip: string) => {
   if (!ip) return "";
   const parts = ip.split('.');
@@ -309,6 +309,21 @@ function App() {
   useEffect(() => { targetAddressRef.current = targetAddress; }, [targetAddress]);
   useEffect(() => { localIpRef.current = localIp; }, [localIp]);
 
+  const forceUpdateCheck = async () => {
+    try {
+      const { check } = await import('@tauri-apps/plugin-updater');
+      const update = await check();
+      if (update?.available) {
+        setUpdateInfo(update);
+        alert("🎉 Yeni güncelleme bulundu: v" + update.version);
+      } else {
+        alert("✅ Uygulamanız güncel veya sürüm eşleşmiyor.");
+      }
+    } catch (e) {
+      alert("❌ GÜNCELLEME HATASI: " + e);
+    }
+  };
+
   const installUpdate = async () => {
     if (!updateInfo || isWeb) return;
     setIsUpdating(true);
@@ -540,9 +555,7 @@ function App() {
     }
   };
 
-  // YENİ: AĞ SİNYALLERİNDE OTOMATİK TESPİT YAKALAYICI
   const handleIncomingNetworkData = async (data: any, isHostMode: boolean) => {
-    // 1. Zeka: Host bize IP'sini yollarsa aynı evde miyiz diye çaktırmadan test et
     if (data.action === "network_info" && !isHostMode && connModeRef.current === 'webrtc') {
       const hostIp = data.localIp;
       if (hostIp && hostIp !== "Bilinmiyor") {
@@ -552,7 +565,7 @@ function App() {
             console.log("🔥 Kinflix Zekası: Aynı evde bulunuldu! WebRTC kapatılıp Yerel Ağa geçiliyor...");
             connectWebSocket(hostIp);
           }
-        }).catch(() => {}); // Değilsek hata verme, WebRTC'den devam et.
+        }).catch(() => {});
       }
     }
     else if (data.action === "chat_msg") {
@@ -596,10 +609,13 @@ function App() {
   };
 
   const connectParty = (target: string) => {
+    // YENİ: Odaya girince chat'i sıfırla
+    setChatMessages([]);
+    localStorage.removeItem("kinflix_chat_history");
+
     if (!target) return;
     const isIp = target.includes(".") || target.startsWith("http") || target === "localhost";
     
-    // YENİ: 2. Zeka - Matematiksel 6 Haneli Offline IP Çözücü
     if (!isIp && target.length === 6) {
       if (target.startsWith("9")) {
         const val = parseInt(target.slice(1));
@@ -656,6 +672,10 @@ function App() {
   };
 
   const initPeerHost = (currentMovies: Movie[]) => {
+    // YENİ: Oda kurarken de chat'i sıfırla
+    setChatMessages([]);
+    localStorage.removeItem("kinflix_chat_history");
+
     if (peerRef.current) return;
     const shortCode = Math.floor(1000 + Math.random() * 9000).toString();
     const customId = isWeb ? undefined : `kinflix-${shortCode}`; 
@@ -669,7 +689,6 @@ function App() {
         setIsHost(true);
         conn.on('open', () => { 
           conn.send({ action: "catalog", catalog: currentMovies }); 
-          // 1. ZEKA: Bağlanan kişiye lokal IP'mizi çaktırmadan yolla
           if (localIpRef.current && localIpRef.current !== "Bilinmiyor") {
              conn.send({ action: "network_info", localIp: localIpRef.current });
           }
@@ -712,10 +731,15 @@ function App() {
     return tauriConvertFileSrc(selectedMovie.video_path);
   };
 
+  // YENİ: Siyah Ekran ve Auto-Play Çözümü
   useEffect(() => {
     if (videoRef.current && isRemoteStreaming && connModeRef.current === 'webrtc' && remoteStream) {
+      videoRef.current.src = ""; // Tarayıcının karışmasını önler
       videoRef.current.srcObject = remoteStream;
-      videoRef.current.play().catch(e => console.log("Engeli aşmak için tıklayın:", e));
+      videoRef.current.play().catch(e => {
+        console.log("Otomatik oynatma engellendi, kullanıcı tıklaması bekleniyor:", e);
+        setIsVideoPlaying(false);
+      });
     }
   }, [remoteStream, isRemoteStreaming, selectedMovie]);
 
@@ -1133,8 +1157,10 @@ function App() {
             `}
           </style>
 
+          {/* YENİ: crossOrigin eklendi, siyah ekran engeli aşıldı */}
           <video
             ref={videoRef} 
+            crossOrigin="anonymous" 
             src={getSafeVideoSource()} 
             autoPlay 
             playsInline
@@ -1157,7 +1183,6 @@ function App() {
           <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-6 transition-opacity duration-300 ${showControls ? "opacity-100" : "opacity-0"}`}>
             <button onClick={closePlayer} className="absolute bottom-[90vh] left-6 text-4xl text-white hover:text-red-500 transition drop-shadow-lg">✕</button>
 
-            {/* SOHBET BUTONU TV'DE ÇIKMAZ */}
             {!isTV && partyStatus === 'connected' && (
               <button onClick={(e) => {e.stopPropagation(); setIsChatOpen(!isChatOpen);}} className="absolute bottom-[90vh] right-6 flex items-center gap-2 bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded-full backdrop-blur transition shadow-xl border border-blue-500">
                 💬 SOHBET {unreadCount > 0 ? `(${unreadCount})` : ''}
@@ -1269,6 +1294,12 @@ function App() {
               <div className="text-center py-10">
                 <h3 className="text-2xl font-bold text-white mb-4">Misafir Modundasınız 🎭</h3>
                 <p className="text-zinc-400 leading-relaxed max-w-md mx-auto">Oda kurucusunun (Host) kütüphanesini görüntülüyorsunuz. Bütün film verileri doğrudan Host'tan size aktarılıyor.<br/><br/>Arkanıza yaslanın ve filmin tadını çıkarın!</p>
+                
+                {/* YENİ: Web Müşterileri için de Sürüm Bilgisi */}
+                <div className="mt-8 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 max-w-xs mx-auto">
+                  <h3 className="text-blue-500 font-bold mb-2">Sistem Durumu</h3>
+                  <p className="text-sm text-zinc-300">Web arayüzü Vercel tarafından otomatik güncellenir.</p>
+                </div>
               </div>
             ) : (
               <div className="space-y-6">
@@ -1290,6 +1321,15 @@ function App() {
                     ))}
                   </div>
                 </div>
+
+                {/* YENİ: GÜNCELLEME KONTROL BUTONU EKLENDİ */}
+                <div className="mb-6 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4">
+                  <h3 className="text-blue-500 font-bold mb-2">Masaüstü Güncellemeleri</h3>
+                  <button onClick={forceUpdateCheck} className="rounded bg-blue-600 px-4 py-2 text-sm font-bold transition hover:bg-blue-700 text-white">
+                    Sürüm Kontrolü Yap
+                  </button>
+                </div>
+
                 <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-4"><h3 className="text-red-500 font-bold mb-2">{t.dangerZone}</h3><button onClick={async () => { if(confirm("Emin misin?")) { await clearDatabase(); setMovies([]); setIsSettingsOpen(false); } }} className="rounded bg-red-600 px-4 py-2 text-sm font-bold transition hover:bg-red-700">{t.resetDb}</button></div>
               </div>
             )}

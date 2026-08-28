@@ -1,11 +1,11 @@
 {
-  "version": "1.0.1",
+  "version": "0.3.0",
   "notes": "Yeni sesli sohbet ve PIP özellikleri eklendi!",
   "pub_date": "2026-08-28T10:00:00Z",
   "platforms": {
-    "windows-x86_64": {
-      "signature": "BURAYA_SIG_DOSYASININ_İÇİNDEKİ_YAZIYI_YAPIŞTIR",
-      "url": "https://twilight-bush-60ea.dogruts01.workers.dev/downloads/kinflix_0.1.0_x64-setup.exe"
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWm05WkpKQzErOE5HRXR5SStydUF2ZGRNQmFQeXdJaGYvOGRGVWdQSWM2VjRRYVVGVi80dTZXQkZOTFExRU4rd3dXb1pKV1hXeUlKbjVEeXpCNk54bjNBTngwYWhpM2c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3OTA2MDQ2CWZpbGU6a2luZmxpeF8wLjIuMF94NjQtc2V0dXAuZXhlCnh4LzFmdW5Wb1FpM3RzNDREdjc1VUw4UnRKUldJaVkyNjRKWG43MytFQWt3TWNWWURGVGZhaHEvQkNWQzJkWGdob01KUVRuZC9QVWJIL1FvTjVjU0JBPT0K",
+      "url": "https://github.com/dogruts/kinflix/releases/download/v0.2.0/kinflix_0.2.0_x64-setup.exe"
     }
   }
 }
