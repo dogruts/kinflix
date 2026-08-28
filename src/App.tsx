@@ -2,10 +2,9 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import Peer, { DataConnection, MediaConnection } from "peerjs";
 
-// YENİ: Cihaz Tespiti Radarı (Tauri, Web ve TV ayrımı)
 const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI_IPC__' in window || '__TAURI__' in window);
 const isTV = typeof navigator !== 'undefined' && /(Web0S|NetCast|SmartTV|Tizen)/i.test(navigator.userAgent);
-const isWeb = !isTauri; // Tauri değilse Web platformundadır (Tarayıcı veya TV)
+const isWeb = !isTauri; 
 
 import { getMovieMetadata } from "./tmdb";
 import {
@@ -54,7 +53,6 @@ type TabState = "home" | "library" | "watchlist";
 type Lang = "tr" | "en";
 type SubtitleTrack = { id: string; url: string; label: string; srtContent: string; offset: number; originalPath?: string };
 
-// YENİ: Emoji Tepkileri (Reactions) Tipi Eklendi
 type ChatMessage = { 
   id: string; 
   sender: "me" | "peer"; 
@@ -71,6 +69,19 @@ const shuffleArray = <T,>(array: T[]): T[] => {
     [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
   }
   return newArr;
+};
+
+// YENİ: OFFLINE LOKAL IP KODLAYICI (192.168.1.5 -> 900261)
+const generateLocalShortCode = (ip: string) => {
+  if (!ip) return "";
+  const parts = ip.split('.');
+  if (parts.length === 4) {
+    const val = parseInt(parts[2]) * 256 + parseInt(parts[3]);
+    const valStr = val.toString().padStart(5, '0');
+    if (ip.startsWith("192.168.")) return `9${valStr}`;
+    if (ip.startsWith("10.0.")) return `8${valStr}`;
+  }
+  return "";
 };
 
 function App() {
@@ -134,6 +145,7 @@ function App() {
   const partyStatusRef = useRef<"disconnected" | "connected">("disconnected");
   const connModeRef = useRef<"none" | "webrtc" | "ip">("none");
   const targetAddressRef = useRef("");
+  const localIpRef = useRef("");
 
   const peerRef = useRef<Peer | null>(null);
   const connRef = useRef<DataConnection | null>(null); 
@@ -144,10 +156,10 @@ function App() {
   let hideControlsTimeout = useRef<number | null>(null);
 
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const isChatOpenRef = useRef(false); // Ağ sinyallerinde güncel durumu bilmek için
+  const isChatOpenRef = useRef(false);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0); // YENİ: Okunmamış mesaj sayısı
+  const [unreadCount, setUnreadCount] = useState(0); 
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -285,7 +297,6 @@ function App() {
     loadData();
   }, []);
 
-  // YENİ: Okunmamış mesaj sayacını sıfırlama
   useEffect(() => {
     isChatOpenRef.current = isChatOpen;
     if (isChatOpen) setUnreadCount(0);
@@ -296,6 +307,7 @@ function App() {
   useEffect(() => { partyStatusRef.current = partyStatus; }, [partyStatus]);
   useEffect(() => { connModeRef.current = connMode; }, [connMode]);
   useEffect(() => { targetAddressRef.current = targetAddress; }, [targetAddress]);
+  useEffect(() => { localIpRef.current = localIp; }, [localIp]);
 
   const installUpdate = async () => {
     if (!updateInfo || isWeb) return;
@@ -494,7 +506,6 @@ function App() {
     reader.readAsDataURL(file);
   };
 
-  // YENİ: Emoji Reaction Gönderme
   const sendReaction = (msgId: string, emoji: string) => {
     setChatMessages(prev => {
       const newChat = prev.map(m => {
@@ -529,12 +540,25 @@ function App() {
     }
   };
 
+  // YENİ: AĞ SİNYALLERİNDE OTOMATİK TESPİT YAKALAYICI
   const handleIncomingNetworkData = async (data: any, isHostMode: boolean) => {
-    if (data.action === "chat_msg") {
+    // 1. Zeka: Host bize IP'sini yollarsa aynı evde miyiz diye çaktırmadan test et
+    if (data.action === "network_info" && !isHostMode && connModeRef.current === 'webrtc') {
+      const hostIp = data.localIp;
+      if (hostIp && hostIp !== "Bilinmiyor") {
+        const httpBaseUrl = `http://${hostIp}:8765`;
+        fetch(`${httpBaseUrl}/movies`, { cache: "no-store" }).then(res => {
+          if (res.ok) {
+            console.log("🔥 Kinflix Zekası: Aynı evde bulunuldu! WebRTC kapatılıp Yerel Ağa geçiliyor...");
+            connectWebSocket(hostIp);
+          }
+        }).catch(() => {}); // Değilsek hata verme, WebRTC'den devam et.
+      }
+    }
+    else if (data.action === "chat_msg") {
       const receivedMsg = data.msg as ChatMessage;
       receivedMsg.sender = "peer"; 
       saveChatMessage(receivedMsg);
-      // Mesaj geldiğinde sohbet kapalıysa bildirim sayısını artır
       if (!isChatOpenRef.current) setUnreadCount(prev => prev + 1);
     }
     else if (data.action === "chat_reaction") {
@@ -574,6 +598,20 @@ function App() {
   const connectParty = (target: string) => {
     if (!target) return;
     const isIp = target.includes(".") || target.startsWith("http") || target === "localhost";
+    
+    // YENİ: 2. Zeka - Matematiksel 6 Haneli Offline IP Çözücü
+    if (!isIp && target.length === 6) {
+      if (target.startsWith("9")) {
+        const val = parseInt(target.slice(1));
+        const ip = `192.168.${Math.floor(val / 256)}.${val % 256}`;
+        setConnMode("ip"); connectWebSocket(ip); return;
+      } else if (target.startsWith("8")) {
+        const val = parseInt(target.slice(1));
+        const ip = `10.0.${Math.floor(val / 256)}.${val % 256}`;
+        setConnMode("ip"); connectWebSocket(ip); return;
+      }
+    }
+
     if (isIp) { 
       setConnMode("ip"); connectWebSocket(target); 
     } else { 
@@ -629,7 +667,13 @@ function App() {
       setPartyStatus("connected"); setConnMode("webrtc"); connRef.current = conn; 
       if (!isWeb) {
         setIsHost(true);
-        conn.on('open', () => { conn.send({ action: "catalog", catalog: currentMovies }); });
+        conn.on('open', () => { 
+          conn.send({ action: "catalog", catalog: currentMovies }); 
+          // 1. ZEKA: Bağlanan kişiye lokal IP'mizi çaktırmadan yolla
+          if (localIpRef.current && localIpRef.current !== "Bilinmiyor") {
+             conn.send({ action: "network_info", localIp: localIpRef.current });
+          }
+        });
       }
       conn.on('data', (data) => handleIncomingNetworkData(data, !isWeb));
     });
@@ -875,7 +919,6 @@ function App() {
         </div>
       )}
 
-      {/* WEB MİSAFİR GİRİŞ EKRANI (Normal Tarayıcı için) */}
       {isWeb && !isTV && partyStatus !== 'connected' && (
         <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
           <h1 className="text-6xl font-extrabold tracking-tight mb-8">KIN<span className="text-red-600">FLIX</span> <span className="text-2xl text-zinc-500">WEB</span></h1>
@@ -893,14 +936,13 @@ function App() {
         </div>
       )}
 
-      {/* TV MİSAFİR GİRİŞ EKRANI (LG webOS / Smart TV için) */}
       {isTV && partyStatus !== 'connected' && (
         <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
           <h1 className="text-6xl font-extrabold tracking-tight mb-8">KIN<span className="text-red-600">FLIX</span> <span className="text-2xl text-zinc-500">TV</span></h1>
-          <p className="text-zinc-400 mb-8 max-w-md">Televizyon kumandası ile oda kodunu gir ve bağlan.</p>
+          <p className="text-zinc-400 mb-8 max-w-md">Televizyon kumandası ile oda kodunu veya kısa IP kodunu girip bağlan.</p>
           <div className="w-full max-w-md flex flex-col gap-4">
             <input 
-              autoFocus type="number" placeholder="4 Haneli Kodu Girin" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} 
+              autoFocus type="number" placeholder="4 veya 6 Haneli Kodu Girin" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} 
               onKeyDown={(e) => e.key === 'Enter' && connectParty(targetAddress)}
               className="w-full rounded-xl border-2 border-zinc-800 bg-black px-6 py-4 text-center text-3xl text-white outline-none focus:border-red-600 transition font-mono tracking-widest" 
             />
@@ -937,28 +979,42 @@ function App() {
         </div>
       </header>
 
-      {/* PARTY MODALI (HOST İÇİN QR KODLU) */}
+      {/* HOST MENÜSÜ (AĞ BİLGİLERİ VE KODLARI) */}
       {isPartyMenuOpen && !isWeb && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 flex gap-8">
-            <div className="flex-1 space-y-6">
-              <div className="flex items-center justify-between mb-4">
+          <div className="w-full max-w-3xl rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 flex gap-8">
+            <div className="flex-1 space-y-4">
+              <div className="flex items-center justify-between mb-2">
                 <h2 className="text-3xl font-bold">🎉 {t.party}</h2>
               </div>
+              
               <div className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-4 text-center">
-                <h3 className="mb-2 text-sm font-semibold text-zinc-400">TV ve Telefon İçin Kısayol:</h3>
-                <div className="bg-black rounded-lg p-3 text-4xl font-black tracking-widest text-green-400 border border-zinc-800">
+                <h3 className="mb-2 text-sm font-semibold text-zinc-400">İnternet Kodu (Otomatik):</h3>
+                <div className="bg-black rounded-lg p-2 text-4xl font-black tracking-widest text-green-400 border border-zinc-800">
                   {peerId || "..."}
                 </div>
+                
+                <h3 className="mt-4 mb-2 text-sm font-semibold text-zinc-400">Yerel IP (Aynı Ev / Wi-Fi İçin):</h3>
+                <div className="bg-black rounded-lg p-2 text-xl font-mono tracking-widest text-blue-400 border border-zinc-800 flex justify-between items-center px-4">
+                  <span>{localIp || "Yükleniyor..."}</span>
+                  {generateLocalShortCode(localIp) && (
+                    <span className="text-sm bg-blue-900/30 text-blue-300 px-3 py-1 rounded border border-blue-800/50 flex flex-col items-center">
+                      <span className="text-[10px] uppercase tracking-wider text-blue-500 font-bold mb-0.5">TV Kısa Kodu</span>
+                      <span>{generateLocalShortCode(localIp)}</span>
+                    </span>
+                  )}
+                </div>
               </div>
+
               <div>
-                <h3 className="mb-2 text-sm font-semibold text-zinc-400">Veya Arkadaşının Kodunu Gir:</h3>
+                <h3 className="mb-2 text-sm font-semibold text-zinc-400">Arkadaşının Kodunu Gir:</h3>
                 <div className="flex gap-2">
-                  <input type="text" placeholder="Örn: 5842" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} className="flex-1 rounded-lg border border-zinc-700 bg-black px-4 py-3 text-white outline-none focus:border-zinc-500 transition font-mono" />
+                  <input type="text" placeholder="Örn: 5842 veya 900261" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} className="flex-1 rounded-lg border border-zinc-700 bg-black px-4 py-2 text-white outline-none focus:border-zinc-500 transition font-mono" />
                   <button onClick={() => connectParty(targetAddress)} className="rounded-lg bg-red-600 px-6 font-bold hover:bg-red-700 transition">{t.connect}</button>
                 </div>
               </div>
             </div>
+            
             <div className="w-48 flex flex-col items-center justify-center border-l border-zinc-800 pl-8">
                <h3 className="text-sm font-bold text-zinc-400 mb-4 text-center">Telefondan Katıl</h3>
                <div className="bg-white p-2 rounded-xl">
@@ -997,7 +1053,7 @@ function App() {
         </div>
       )}
 
-      {/* SOHBET BUTONU (SADECE WEB VE PC'DE ÇIKAR, TV'DE GÖRÜNMEZ) */}
+      {/* SOHBET MENÜSÜ AÇMA BUTONU (SADECE WEB VE PC) */}
       {!isTV && partyStatus === 'connected' && !isPlaying && (
         <button onClick={() => setIsChatOpen(!isChatOpen)} className="fixed bottom-8 right-8 z-[150] flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 shadow-2xl hover:scale-110 transition-transform text-2xl relative">
           💬
@@ -1009,7 +1065,7 @@ function App() {
         </button>
       )}
 
-      {/* SOHBET MODALI (SADECE WEB VE PC'DE) */}
+      {/* SOHBET MODALI */}
       {!isTV && isChatOpen && partyStatus === 'connected' && (
         <div className="fixed right-0 top-0 bottom-0 w-80 bg-zinc-950 border-l border-zinc-800 z-[250] flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
           <div className="p-4 bg-zinc-900 border-b border-zinc-800 flex justify-between items-center shadow-md">
@@ -1025,7 +1081,6 @@ function App() {
               <div key={msg.id} className={`relative group max-w-[85%] rounded-xl p-2.5 text-sm shadow-md ${msg.sender === 'me' ? 'bg-blue-600 text-white self-end rounded-tr-sm' : 'bg-zinc-800 text-zinc-200 self-start rounded-tl-sm'}`}>
                 {msg.type === 'text' ? <p className="break-words">{msg.content}</p> : <img src={msg.content} className="rounded-lg w-full object-cover cursor-pointer hover:opacity-80 transition" onClick={async () => { if(!isWeb) { const { openUrl } = await import('@tauri-apps/plugin-opener'); openUrl(msg.content); } else { window.open(msg.content); } }} />}
                 
-                {/* TEPKİLERİ GÖSTER */}
                 {msg.reactions && Object.keys(msg.reactions).length > 0 && (
                   <div className="flex gap-1 mt-1.5 flex-wrap">
                     {Object.entries(msg.reactions).map(([emo, count]) => (
@@ -1037,8 +1092,7 @@ function App() {
                 )}
                 <span className="text-[10px] opacity-50 block mt-1 text-right">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 
-                {/* TEPKİ VERME MENÜSÜ (Hover olunca çıkar) */}
-                <div className={`absolute -top-4 ${msg.sender === 'me' ? 'left-0' : 'right-0'} hidden group-hover:flex bg-zinc-800 border border-zinc-700 rounded-full shadow-xl p-1 gap-1`}>
+                <div className={`absolute -top-4 ${msg.sender === 'me' ? 'left-0' : 'right-0'} hidden group-hover:flex bg-zinc-800 border border-zinc-700 rounded-full shadow-xl p-1 gap-1 z-50`}>
                   {['👍', '❤️', '😂', '😲'].map(emo => (
                      <button key={emo} onClick={() => sendReaction(msg.id, emo)} className="hover:scale-125 transition px-1">{emo}</button>
                   ))}
@@ -1048,7 +1102,6 @@ function App() {
           </div>
           
           <div className="bg-zinc-900 border-t border-zinc-800 flex flex-col">
-            {/* EMOJİ ÇUBUĞU */}
             <div className="flex gap-3 px-4 pt-2 pb-1 text-xl justify-center border-b border-zinc-800/50 bg-black/20">
               {['😀', '😂', '❤️', '🔥', '👍', '😲'].map(emo => (
                 <button key={emo} onClick={() => setChatInput(prev => prev + emo)} className="hover:scale-125 transition drop-shadow-md">{emo}</button>
@@ -1277,7 +1330,7 @@ function App() {
         </div>
       )}
 
-      {!isWeb && (
+      {(!isWeb && !isTV) && (
         <main className="flex-1 pb-10">
           {error && <div className="mx-10 mb-6 rounded-xl border border-red-900 bg-red-950/30 p-4 text-red-400">Hata: {error}</div>}
           {movies.length === 0 && !scanning && !syncing ? (
