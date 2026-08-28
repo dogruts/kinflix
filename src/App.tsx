@@ -83,7 +83,6 @@ const generateLocalShortCode = (ip: string) => {
   return "";
 };
 
-// YENİ: 0, O, 1, I, L gibi karışan harfleri dışlayan 6 haneli sabit oda kodu
 const generateRoomCode = () => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let result = "";
@@ -92,6 +91,9 @@ const generateRoomCode = () => {
   }
   return result;
 };
+
+// YENİ: Windows/Unix Path Normalizasyonu (Aynı klasörü farklı slashtan silmesin diye)
+const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
 
 function App() {
   const [lang, setLang] = useState<Lang>("tr");
@@ -169,6 +171,14 @@ function App() {
   const callRef = useRef<MediaConnection | null>(null); 
   const voiceCallRef = useRef<MediaConnection | null>(null); 
   const wsRef = useRef<WebSocket | null>(null);
+  
+  const lastSyncTimeRef = useRef<number>(0);
+  
+  const localSubsRef = useRef<SubtitleTrack[]>([]);
+  useEffect(() => { localSubsRef.current = localSubs; }, [localSubs]);
+
+  const activeSubIndexRef = useRef<number>(-1);
+  useEffect(() => { activeSubIndexRef.current = activeSubIndex; }, [activeSubIndex]);
 
   let hideControlsTimeout = useRef<number | null>(null);
 
@@ -316,7 +326,6 @@ function App() {
           if (sessionStr) {
             const { target, time } = JSON.parse(sessionStr);
             if (Date.now() - time < 1000 * 60 * 60 * 3) {
-              console.log("Kinflix: Eski oturum kurtarılıyor...", target);
               setTargetAddress(target);
               connectParty(target);
             }
@@ -374,6 +383,7 @@ function App() {
   };
   const handleSaveToken = async (val: string) => { setTmdbToken(val); if(!isWeb) await setSetting("tmdb_token", val); };
 
+  // YENİ: Yarış durumunu (Race Condition) kıran Timeout ile güvenli kapatma
   const disconnectParty = () => {
     if (connRef.current) { connRef.current.close(); connRef.current = null; }
     if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
@@ -392,8 +402,10 @@ function App() {
       setTargetAddress("");
     } 
     
-    // Ağ motorunu herkes için tekrar canlandırır, sonsuz döngüyü engeller
-    initPeerHost(); 
+    // Sistem destroy async döngüsünden çıkana kadar nefes alma mühleti
+    setTimeout(() => {
+      initPeerHost(); 
+    }, 500);
   };
 
   async function chooseFolder() {
@@ -407,6 +419,7 @@ function App() {
     } catch (error) { setError(String(error)); }
   }
 
+  // YENİ: Windows Path Normalizasyonu yapıldı (E:/Movies ile E:/Movies/ farkı bitti)
   async function scanFolder(path: string) {
     if (isWeb) return;
     setScanning(true); setError(null);
@@ -414,8 +427,11 @@ function App() {
       const { invoke } = await import("@tauri-apps/api/core");
       const result = await invoke<Movie[]>("scan_movies", { path });
       for (const movie of result) await saveMovie(movie);
+      
       const scannedPaths = result.map(m => m.video_path);
-      const dbMoviesInFolder = (await getMovies()).filter(m => m.folder_path === path);
+      const normalizedInput = normalizePath(path);
+      const dbMoviesInFolder = (await getMovies()).filter(m => normalizePath(m.folder_path) === normalizedInput);
+      
       for (const dbMovie of dbMoviesInFolder) {
         if (!scannedPaths.includes(dbMovie.video_path)) await removeMovie(dbMovie.video_path);
       }
@@ -423,21 +439,40 @@ function App() {
     } catch (error) { setError(String(error)); } finally { setScanning(false); }
   }
 
+  // YENİ: 1045 Film için Rate Limit Batching (5'erli grup, Hata raporlamalı)
   async function syncMovieMetadata() {
     if (syncing || isWeb) return;
     if (!tmdbToken) { setIsSettingsOpen(true); return; }
     setSyncing(true); setError(null);
     try {
       const storedMovies = await getMovies();
-      for (const movie of storedMovies) {
-        try {
-          const metadata = await getMovieMetadata(movie.title, movie.year, tmdbToken, lang);
-          if (!metadata) continue;
-          await updateMovieMetadata(movie.video_path, metadata);
-          await new Promise(r => setTimeout(r, 250));
-        } catch (err) {}
+      let successCount = 0;
+      let failCount = 0;
+      const batchSize = 5;
+
+      for (let i = 0; i < storedMovies.length; i += batchSize) {
+        const batch = storedMovies.slice(i, i + batchSize);
+        await Promise.all(batch.map(async (movie) => {
+          try {
+            const metadata = await getMovieMetadata(movie.title, movie.year, tmdbToken, lang);
+            if (metadata) {
+              await updateMovieMetadata(movie.video_path, metadata);
+              successCount++;
+            } else {
+              failCount++;
+            }
+          } catch (err) {
+            failCount++;
+          }
+        }));
+        
+        // 5 filmlik paket sonrası rate limit dinlenmesi
+        if (i + batchSize < storedMovies.length) {
+          await new Promise(r => setTimeout(r, 400));
+        }
       }
       setMovies(await getMovies());
+      alert(`✅ TMDB Eşitleme Tamamlandı!\n\n✔ Başarılı: ${successCount}\n❌ Başarısız/Bulunamadı: ${failCount}`);
     } catch (error) { setError(String(error)); } finally { setSyncing(false); }
   }
 
@@ -651,11 +686,16 @@ function App() {
         
         if (selectedMovieRef.current) {
            console.log("Yeni misafir geldi, oynatılan filme eşitleniyor...");
-           // 1. ADIM: Misafire sadece "filmi yükle" diyoruz
+           
            broadcastEvent("load", { movie: selectedMovieRef.current });
            
-           // 2. ADIM (GECİKMELİ): Misafirin oynatıcıyı kurması için 1.5 sn mühlet veriyoruz
-           // Ardından şak diye kesin saniyeye ZORLA ATLATIP, Play/Pause durumunu kilitliyoruz.
+           if (localSubsRef.current.length > 0) {
+             broadcastEvent("sync_subs", {
+               subs: localSubsRef.current,
+               activeIndex: activeSubIndexRef.current
+             });
+           }
+           
            setTimeout(() => {
               if (videoRef.current) {
                  broadcastEvent("seek", { time: videoRef.current.currentTime });
@@ -674,6 +714,14 @@ function App() {
         setSelectedMovie(data.movie); 
         setIsPlaying(true); 
         setIsRemoteStreaming(true); 
+      }
+      else if (data.action === "sync_time" && !hostMode) {
+        if (connModeRef.current === 'webrtc') {
+          setCurrentTime(data.time);
+          if (data.duration && !isNaN(data.duration) && isFinite(data.duration)) {
+            setDuration(data.duration);
+          }
+        }
       }
       else if (data.action === "chat_msg") {
         const receivedMsg = data.msg as ChatMessage;
@@ -726,14 +774,13 @@ function App() {
 
     if (!target) { setPartyStatus("disconnected"); partyStatusRef.current = "disconnected"; return; }
     
-    const cleanTarget = target.trim();
+    const cleanTarget = target.trim(); 
     
-    // Timeout süresi WebRTC için 15 Saniyeye çıkarıldı
     setTimeout(() => {
       if (partyStatusRef.current === 'connecting') {
         console.log("Bağlantı zaman aşımı.");
         disconnectParty();
-        alert("❌ Odaya bağlanılamadı! Host uygulamayı kapatmış, kod değişmiş veya internet WebRTC'yi engelliyor olabilir.\nAynı evdeyseniz 6 haneli mavi kodu kullanın.");
+        alert("❌ Odaya bağlanılamadı! Host uygulamayı kapatmış, kod değişmiş veya internet WebRTC'yi engelliyor olabilir.\nAynı evdeyseniz TV Kısa Kodunu kullanın.");
       }
     }, 15000);
 
@@ -751,7 +798,6 @@ function App() {
         setConnMode("ip"); connModeRef.current = "ip";
         connectWebSocket(ip); return;
       } else if (cleanTarget.length === 6) {
-        // YENİ: 6 Haneli Temiz Oda Koduna Bağlanma Mantığı
         setConnMode("webrtc"); connModeRef.current = "webrtc";
         const targetId = `kinflix-room-${cleanTarget.toUpperCase()}`;
         connectPeerJS(targetId); return;
@@ -768,7 +814,6 @@ function App() {
   };
 
   const connectPeerJS = (targetId: string) => {
-    // Motor yoksa önce motoru kur
     if (!peerRef.current || peerRef.current.destroyed) {
       initPeerHost();
     }
@@ -847,7 +892,6 @@ function App() {
 
     if (peerRef.current) return;
 
-    // YENİ: Hafızadan eski oda kodunu çek, yoksa temiz 6 haneli yeni kod üret
     let savedCode = localStorage.getItem("kinflix_host_code");
     if (!savedCode || isWeb) {
       savedCode = generateRoomCode();
@@ -860,7 +904,6 @@ function App() {
     peer.on('error', (err: any) => {
       console.error("PeerJS Hatası:", err);
       if (err.type === 'unavailable-id' && !isWeb) {
-        // Çakışma koruması (Aynı bilgisayarda 2. kere Host açarsan)
         localStorage.removeItem("kinflix_host_code");
         initPeerHost();
         return;
@@ -953,7 +996,6 @@ function App() {
     
     if (isWeb) return "";
 
-    // P2P Canlı yayındayken lokal dosya Axum'a yönlendirilir ki stream bloklanmasın (Eski hatayı düzelten nokta)
     if (partyStatusRef.current === 'connected' && connModeRef.current === 'webrtc') {
       return `http://127.0.0.1:8765/video?path=${encodeURIComponent(selectedMovie.video_path)}`;
     }
@@ -1002,13 +1044,21 @@ function App() {
     
     setOsResults([]); setOsError(null); setSelectedMovie(movieToPlay); setIsPlaying(true); setIsVideoPlaying(true); setPlaybackSpeed(1);
     
+    // YENİ: captureStream için 1.5 saniyelik kör bekleyiş bitti! Doğrudan "playing" eventini dinliyor
     if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.current === 'connected') {
-      setTimeout(() => {
+      const handlePlaying = () => {
         if (connRef.current && videoRef.current && peerRef.current) {
+           if (callRef.current) { callRef.current.close(); }
            const stream = (videoRef.current as any).captureStream();
            callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
         }
-      }, 1500); 
+        videoRef.current?.removeEventListener('playing', handlePlaying);
+      };
+      
+      // Video componentinin yerleşmesi için ufacık bir nefes (50ms) verip dinleyiciyi takıyoruz
+      setTimeout(() => {
+        videoRef.current?.addEventListener('playing', handlePlaying);
+      }, 50);
     }
   };
 
@@ -1031,7 +1081,7 @@ function App() {
   };
 
   const formatTime = (time: number) => {
-    if (isNaN(time)) return "00:00";
+    if (isNaN(time) || !isFinite(time)) return "00:00";
     const m = Math.floor(time / 60).toString().padStart(2, "0");
     const s = Math.floor(time % 60).toString().padStart(2, "0");
     return `${m}:${s}`;
@@ -1104,8 +1154,12 @@ function App() {
 
   useEffect(() => {
     if (videoRef.current) {
-      const tracks = videoRef.current.textTracks;
-      for (let i = 0; i < tracks.length; i++) { tracks[i].mode = "showing"; }
+      setTimeout(() => {
+        if (videoRef.current) {
+          const tracks = videoRef.current.textTracks;
+          for (let i = 0; i < tracks.length; i++) { tracks[i].mode = "showing"; }
+        }
+      }, 100);
     }
   }, [activeSubIndex, localSubs]);
 
@@ -1316,6 +1370,7 @@ function App() {
               <div className="w-48 flex flex-col items-center justify-center border-l border-zinc-800 pl-8">
                  <h3 className="text-sm font-bold text-zinc-400 mb-4 text-center">Telefondan Katıl</h3>
                  <div className="bg-white p-2 rounded-xl">
+                   {/* YENİ: NETLIFY ADRESİ EKLENDİ */}
                    <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent('https://kinflix.netlify.app/?room=' + peerId)}`} alt="Kinflix QR" className="w-32 h-32" />
                  </div>
                  <p className="text-xs text-zinc-500 mt-4 text-center">Kameranı okutarak anında odaya gir.</p>
@@ -1355,7 +1410,6 @@ function App() {
         </div>
       )}
 
-      {/* SOHBET MENÜSÜ AÇMA BUTONU */}
       {!isTV && partyStatus === 'connected' && !isPlaying && (
         <button onClick={() => setIsChatOpen(!isChatOpen)} className="fixed bottom-8 right-8 z-[150] flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 shadow-2xl hover:scale-110 transition-transform text-2xl relative">
           💬
@@ -1367,7 +1421,6 @@ function App() {
         </button>
       )}
 
-      {/* SOHBET MODALI */}
       {!isTV && isChatOpen && partyStatus === 'connected' && (
         <div className="fixed right-0 top-0 bottom-0 w-80 bg-zinc-950 border-l border-zinc-800 z-[250] flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
           <div className="p-4 bg-zinc-900 border-b border-zinc-800 flex justify-between items-center shadow-md">
@@ -1442,11 +1495,24 @@ function App() {
             autoPlay 
             playsInline
             onClick={togglePlay}
-            onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+            onTimeUpdate={(e) => { 
+              if (isRemoteStreaming && connModeRef.current === 'webrtc') return;
+
+              const cTime = e.currentTarget.currentTime;
+              setCurrentTime(cTime);
+
+              if (isHostRef.current && partyStatusRef.current === 'connected') {
+                if (Math.floor(cTime) !== lastSyncTimeRef.current) {
+                  lastSyncTimeRef.current = Math.floor(cTime);
+                  broadcastEvent("sync_time", { time: cTime, duration: e.currentTarget.duration });
+                }
+              }
+            }}
             onLoadedMetadata={(e) => { 
+              if (isRemoteStreaming && connModeRef.current === 'webrtc') return;
+
               setDuration(e.currentTarget.duration); 
               
-              // Host kendi lokal filmini izliyorsa kaldığı yerden (progress) başlasın
               if (selectedMovie.progress && selectedMovie.progress > 0 && !isWeb && !isRemoteStreaming) {
                 e.currentTarget.currentTime = selectedMovie.progress;
               }
@@ -1457,6 +1523,14 @@ function App() {
               <track key={localSubs[activeSubIndex].url} src={localSubs[activeSubIndex].url} kind="subtitles" srcLang={localSubs[activeSubIndex].label.includes("Türkçe") ? "tr" : "en"} label={localSubs[activeSubIndex].label} default />
             )}
           </video>
+
+          {/* YENİ: WebRTC Canlı Yayın Bekleme / Yüklenme Animasyonu */}
+          {isRemoteStreaming && connMode === 'webrtc' && !remoteStream && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-none">
+              <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4 shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
+              <p className="text-white text-xl font-bold animate-pulse">Video Akışı Bekleniyor (P2P)...</p>
+            </div>
+          )}
 
           {currentTime > 10 && currentTime < 120 && !isRemoteStreaming && !isWeb && (
              <button onClick={(e) => { e.stopPropagation(); handleSeek(currentTime + 85); }} className="absolute bottom-32 right-10 z-50 bg-black/60 border border-zinc-500 text-white font-bold px-6 py-3 rounded hover:bg-white hover:text-black transition-all hover:scale-105 shadow-2xl">
