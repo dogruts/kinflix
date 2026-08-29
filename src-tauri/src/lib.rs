@@ -154,22 +154,31 @@ async fn stream_video(Query(params): Query<HashMap<String, String>>, req: Reques
         .unwrap()
 }
 
-// YENİ: Havada (On-the-Fly) H265 -> H264 Çeviri Uç Noktası
+// YENİ: Havada (On-the-Fly) H265 -> H264 Çeviri Uç Noktası (SEEK / İLERİ SARMA DESTEKLİ)
 async fn transcode_stream(Query(params): Query<HashMap<String, String>>) -> impl IntoResponse {
     let path = params.get("path").unwrap_or(&String::new()).to_string();
+    let start_time = params.get("start").unwrap_or(&String::from("0")).to_string(); 
     
-    // x265 filmi al, hızlıca x264'e çevir ve pipe üzerinden fragmanlar halinde canlı gönder
+    let mut ffmpeg_args: Vec<String> = Vec::new();
+
+    if start_time != "0" && !start_time.is_empty() {
+        ffmpeg_args.push("-ss".to_string());
+        ffmpeg_args.push(start_time);
+    }
+
+    ffmpeg_args.extend(vec![
+        "-i".to_string(), path,
+        "-c:v".to_string(), "libx264".to_string(),
+        "-preset".to_string(), "ultrafast".to_string(),
+        "-crf".to_string(), "28".to_string(), 
+        "-c:a".to_string(), "aac".to_string(),
+        // MATROSKA formatı sınırsız süre (live stream) için en stabil çözümdür, 10 saniye bug'ını çözer
+        "-f".to_string(), "matroska".to_string(),
+        "pipe:1".to_string(),
+    ]);
+
     let mut cmd = TokioCommand::new("ffmpeg")
-        .args(&[
-            "-i", &path,
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "28", // Kalite/Hız dengesi
-            "-c:a", "aac",
-            "-movflags", "frag_keyframe+empty_moov",
-            "-f", "mp4",
-            "pipe:1",
-        ])
+        .args(&ffmpeg_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -178,7 +187,7 @@ async fn transcode_stream(Query(params): Query<HashMap<String, String>>) -> impl
     let stream = ReaderStream::new(cmd.stdout.take().unwrap());
     
     Response::builder()
-        .header(header::CONTENT_TYPE, "video/mp4")
+        .header(header::CONTENT_TYPE, "video/x-matroska") // Chrome bunu Native Live Stream olarak tanır
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(Body::from_stream(stream))
         .unwrap()
@@ -367,7 +376,8 @@ pub fn run() {
             convert_to_x264,
             get_local_ip,
             start_tunnel,
-            download_offline_poster
+            download_offline_poster,
+            generate_ai_subtitle
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -395,4 +405,64 @@ async fn download_offline_poster(video_path: String, poster_url: String) -> Resu
     file.write_all(&bytes).map_err(|e| e.to_string())?;
 
     Ok(poster_path.to_string_lossy().to_string())
+}
+
+// main.rs içine ekle
+use std::path::Path;
+
+#[tauri::command]
+async fn generate_ai_subtitle(video_path: String) -> Result<String, String> {
+    let v_path = Path::new(&video_path);
+    let dir = v_path.parent().unwrap();
+    
+    // Dosya yolları
+    let audio_path = dir.join("temp_audio.wav");
+    let srt_output_path = v_path.with_extension("ai.srt"); 
+    let model_path = "C:\\Kinflix\\models\\ggml-base.bin"; // İndirdiğin Whisper modelinin yolu
+    
+    println!("🤖 1/2: Sesi ayrıştırıyorum...");
+    
+    // 1. Adım: FFmpeg ile sesi 16kHz WAV formatına çevir (Whisper sadece bunu anlar)
+    let ffmpeg_status = tokio::process::Command::new("ffmpeg")
+        .args(&[
+            "-i", &video_path,
+            "-ar", "16000",
+            "-ac", "1",
+            "-c:a", "pcm_s16le",
+            audio_path.to_str().unwrap(),
+            "-y" // Varsa üstüne yaz
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .map_err(|e| format!("FFmpeg hatası: {}", e))?;
+
+    if !ffmpeg_status.success() {
+        return Err("Sesi ayıklarken hata oluştu.".to_string());
+    }
+
+    println!("🤖 2/2: Whisper AI altyazı üretiyor...");
+
+    // 2. Adım: whisper.cpp CLI (main.exe) aracını çalıştır (Senin bunu indirip bin klasörüne koyman lazım)
+    // -osrt parametresi doğrudan .srt dosyası çıkarır.
+    let whisper_status = tokio::process::Command::new("whisper-cli") // veya "main.exe"
+        .args(&[
+            "-m", model_path,
+            "-f", audio_path.to_str().unwrap(),
+            "-osrt",
+            "-of", srt_output_path.with_extension("").to_str().unwrap() // .srt uzantısını kendi ekler
+        ])
+        .status()
+        .await
+        .map_err(|e| format!("Whisper çalıştırılamadı: {}", e))?;
+
+    // Çöpleri temizle (Geçici wav dosyasını sil)
+    let _ = tokio::fs::remove_file(audio_path).await;
+
+    if whisper_status.success() {
+        Ok(srt_output_path.to_string_lossy().to_string())
+    } else {
+        Err("Yapay zeka altyazı üretemedi.".to_string())
+    }
 }

@@ -3,6 +3,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import Peer, { DataConnection, MediaConnection } from "peerjs";
 // @ts-ignore
 import WebTorrent from 'webtorrent/dist/webtorrent.min.js';
+import VirtualTheater from './VirtualTheater';
 
 const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI_IPC__' in window || '__TAURI__' in window);
 const isTV = typeof navigator !== 'undefined' && /(Web0S|NetCast|SmartTV|Tizen)/i.test(navigator.userAgent);
@@ -234,6 +235,45 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [isVirtualTheaterOpen, setIsVirtualTheaterOpen] = useState(false);
+
+
+  const [isGeneratingSub, setIsGeneratingSub] = useState(false);
+
+  const handleGenerateAISubtitle = async () => {
+    if (!selectedMovie) return;
+    setIsGeneratingSub(true);
+    showToast("Yapay Zeka filmi dinlemeye başladı...", "🤖");
+    
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const srtPath = await invoke('generate_ai_subtitle', { video_path: selectedMovie.video_path });
+      
+      showToast("Altyazı başarıyla üretildi!", "✅");
+
+      const srtText = await invoke<string>('read_text_file', { path: srtPath });
+      
+// TypeScript'in SubtitleTrack arayüzünün istediği TÜM verileri eksiksiz veriyoruz
+      const newSub = { 
+         id: "ai_sub_" + Date.now().toString(),
+         url: srtPath as string,
+         label: "🤖 AI Üretimi",
+         lang: "AI Üretimi", 
+         path: srtPath as string, 
+         srtContent: srtText,
+         offset: 0,
+         cues: parseSrtToCues(srtText, 0) // En kritiği bu: yazıları ekranda çıkacak formata sokuyor
+      };
+      
+setLocalSubs(prev => [...prev, newSub as any]); // Eğer type interface'in daha da karmaşıksa sonuna 'as any' bırakabilirsin garantilemek için.      setActiveSubIndex(localSubs.length); // Direkt aktif et
+      
+    } catch (err: any) {
+      showToast("Hata: " + err, "❌");
+    } finally {
+      setIsGeneratingSub(false);
+    }
+  };
+
   // Party Mode - Lobi State'leri
   const [hostName, setHostName] = useState<string>("Bilinmiyor");
   const [connectedGuests, setConnectedGuests] = useState<{id: string, name: string}[]>([]);
@@ -246,6 +286,8 @@ function App() {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null); 
+
+  const transcodeOffsetRef = useRef<number>(0);
 
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
@@ -414,12 +456,20 @@ function App() {
   
   const torrentClient = useRef<any>(null);
 
-  const togglePlay = () => {
-    if (videoRef.current && !isRemoteStreaming) { 
-      const time = videoRef.current.currentTime;
-      if (isVideoPlaying) { videoRef.current.pause(); broadcastEvent("pause", { time }); } 
-      else { videoRef.current.play(); broadcastEvent("play", { time }); }
-      setIsVideoPlaying(!isVideoPlaying);
+const togglePlay = (e?: any) => {
+    if (e) e.stopPropagation();
+    if (!videoRef.current) return;
+    
+    const cTime = videoRef.current.currentTime + transcodeOffsetRef.current;
+
+    if (videoRef.current.paused) {
+      videoRef.current.play().catch(()=>{});
+      setIsVideoPlaying(true);
+      broadcastEvent("play", { time: cTime }); // Herkese başlat emri
+    } else {
+      videoRef.current.pause();
+      setIsVideoPlaying(false);
+      broadcastEvent("pause", { time: cTime }); // Herkese durdur emri
     }
   };
 
@@ -1172,7 +1222,7 @@ function App() {
 
   const networkHandlerRef = useRef<Function | null>(null);
   
-  useEffect(() => {
+useEffect(() => {
     networkHandlerRef.current = async (data: any) => {
       const hostMode = isHostRef.current;
       
@@ -1236,11 +1286,10 @@ function App() {
         showToast("Misafir oynatıcıyı kapattı.", "🛑");
       }
       else if (data.action === "sync_time" && !hostMode) {
-        if (connModeRef.current === 'webrtc') {
-          setCurrentTime(data.time);
-          if (data.duration && !isNaN(data.duration) && isFinite(data.duration)) {
-            setDuration(data.duration);
-          }
+        // HOST'UN SÜRESİNİ ZORLA KABUL ET (Böylece bar asla taşmaz!)
+        setCurrentTime(data.time);
+        if (data.duration && !isNaN(data.duration) && isFinite(data.duration)) {
+          setDuration(data.duration);
         }
       }
       else if (data.action === "chat_msg") {
@@ -1271,18 +1320,44 @@ function App() {
         setLocalSubs(guestSubs); setActiveSubIndex(data.activeIndex);
       }
       else if (data.action === "change_sub_index" && !hostMode) { setActiveSubIndex(data.activeIndex); }
-      else if (data.action === "rate_change" && !hostMode) {
+      
+      // DÜZELTME 1: Misafir de oynatma hızını değiştirebilsin diye !hostMode kısıtlaması kalktı
+      else if (data.action === "rate_change") {
         if (videoRef.current) videoRef.current.playbackRate = data.rate;
         setPlaybackSpeed(data.rate);
       }
-      else if (videoRef.current && !hostMode) { 
-        if (data.action === "play") { videoRef.current.currentTime = data.time; videoRef.current.play().catch(()=>{}); setIsVideoPlaying(true); } 
-        else if (data.action === "pause") { videoRef.current.currentTime = data.time; videoRef.current.pause(); setIsVideoPlaying(false); } 
-        else if (data.action === "seek") { videoRef.current.currentTime = data.time; setCurrentTime(data.time); }
+      
+      // DÜZELTME 2: Misafirlerin play/pause/seek komutları için !hostMode kısıtlaması KALDIRILDI!
+      else if (videoRef.current && (data.action === "play" || data.action === "pause" || data.action === "seek")) { 
+        if (data.action === "play") { 
+          videoRef.current.play().catch(()=>{}); 
+          setIsVideoPlaying(true); 
+        } 
+        else if (data.action === "pause") { 
+          videoRef.current.pause(); 
+          setIsVideoPlaying(false); 
+        } 
+        else if (data.action === "seek") { 
+           setCurrentTime(data.time);
+           const isHevc = /265|hevc/i.test(selectedMovieRef.current?.video_path || "");
+           
+           const isTranscodingForHost = isHostRef.current && connModeRef.current === 'webrtc' && isHevc;
+           const isTranscodingForGuest = !isHostRef.current && connModeRef.current === 'ip' && isHevc;
+
+           if (isTranscodingForHost || isTranscodingForGuest) {
+             const baseUrl = targetAddressRef.current.startsWith("http") ? targetAddressRef.current : `http://${targetAddressRef.current}:8765`;
+             const targetUrl = isTranscodingForHost ? "http://127.0.0.1:8765" : baseUrl;
+             
+             transcodeOffsetRef.current = data.time;
+             videoRef.current.src = `${targetUrl}/transcode?path=${encodeURIComponent(selectedMovieRef.current!.video_path)}&start=${Math.floor(data.time)}`;
+             videoRef.current.play().catch(()=>{});
+           } else {
+             videoRef.current.currentTime = data.time; 
+           }
+        }
       }
     };
   });
-
   const connectParty = (target: string) => {
     setPartyStatus("connecting");
     partyStatusRef.current = "connecting"; 
@@ -1675,10 +1750,27 @@ function App() {
     if (previewVideoRef.current) previewVideoRef.current.currentTime = time;
   };
 
-  const handleSeekPlayer = (timeVal: number) => {
-    if(isRemoteStreaming) return; 
-    if (videoRef.current) videoRef.current.currentTime = timeVal;
+const handleSeekPlayer = (timeVal: number) => {
+    // DÜZELTME 1: "if(isRemoteStreaming) return;" kısıtlaması SİLİNDİ! Artık misafir de barı sürükleyebilir.
+    
+    const isHevc = /265|hevc/i.test(selectedMovie?.video_path || "");
+    const isTranscodingForHost = isHostRef.current && connModeRef.current === 'webrtc' && isHevc;
+    const isTranscodingForGuest = !isHostRef.current && connModeRef.current === 'ip' && isHevc;
+    
+    if (isTranscodingForHost || isTranscodingForGuest) {
+      transcodeOffsetRef.current = timeVal;
+      if (videoRef.current) {
+         const baseUrl = targetAddressRef.current.startsWith("http") ? targetAddressRef.current : `http://${targetAddressRef.current}:8765`;
+         const targetUrl = isTranscodingForHost ? "http://127.0.0.1:8765" : baseUrl;
+         videoRef.current.src = `${targetUrl}/transcode?path=${encodeURIComponent(selectedMovie!.video_path)}&start=${Math.floor(timeVal)}`;
+         videoRef.current.play().catch(()=>{});
+      }
+    } else {
+      if (videoRef.current) videoRef.current.currentTime = timeVal;
+    }
+    
     setCurrentTime(timeVal);
+    // Yaptığımız sarma işlemini anında odadaki herkese (Host dahil) gönderiyoruz
     broadcastEvent("seek", { time: timeVal });
   };
 
@@ -1771,10 +1863,11 @@ function App() {
     );
   };
 
-  const getSafeVideoSource = () => {
+ const getSafeVideoSource = () => {
     if (!selectedMovie || selectedMovie.video_path.startsWith("torrent-")) return ""; 
     const isHevc = /265|hevc/i.test(selectedMovie.video_path);
     
+    // MİSAFİR - HTTP MODU
     if (isRemoteStreaming && connModeRef.current === 'ip') {
       const baseUrl = targetAddressRef.current.startsWith("http") ? targetAddressRef.current : `http://${targetAddressRef.current}:8765`;
       return isHevc 
@@ -1782,13 +1875,21 @@ function App() {
         : `${baseUrl}/video?path=${encodeURIComponent(selectedMovie.video_path)}&quality=720p`;
     }
     
+    // MİSAFİR - WEBRTC MODU (Video PeerJS'den gelir, src boştur)
     if (isRemoteStreaming && connModeRef.current === 'webrtc') return "";
     if (isWeb) return "";
 
+    // HOST - P2P/WEBRTC MODU (HAYAT KURTARAN DOKUNUŞ BURADA)
     if (partyStatusRef.current === 'connected' && connModeRef.current === 'webrtc') {
+      if (isHevc) {
+        // Eğer film HEVC ise, Host kendi yerel sunucusundan transcode edilmiş (x264) halini izler.
+        // Böylece tarayıcı bu x264 görüntüyü captureStream() ile misafire sorunsuzca, siyah ekran olmadan gönderir!
+        return `http://127.0.0.1:8765/transcode?path=${encodeURIComponent(selectedMovie.video_path)}`;
+      }
       return `http://127.0.0.1:8765/video?path=${encodeURIComponent(selectedMovie.video_path)}`;
     }
 
+    // HOST - NORMAL İZLEME (Oda yoksa)
     return tauriConvertFileSrc ? tauriConvertFileSrc(selectedMovie.video_path) : "";
   };
 
@@ -2073,12 +2174,19 @@ function App() {
                 <h2 className="text-3xl font-bold">🎉 {t.party}</h2>
               </div>
               
-              {!isWeb && isHost ? (
+{!isWeb && isHost ? (
                 <>
                   <div className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-4 text-center">
                     <h3 className="mb-2 text-sm font-semibold text-zinc-400">Sabit İnternet Oda Kodu (Host):</h3>
                     <div className="bg-black rounded-lg p-2 text-4xl font-black tracking-widest text-green-400 border border-zinc-800 flex justify-between items-center px-6">
-                      <span>{peerId || "..."}</span>
+                      <div className="flex items-center gap-3">
+                        <span>{peerId || "..."}</span>
+                        {peerId && (
+                          <button onClick={() => { navigator.clipboard.writeText(peerId); showToast("Oda kodu kopyalandı!", "📋"); }} className="text-xl text-zinc-500 hover:text-white transition hover:scale-110" title="Kodu Kopyala">
+                            📋
+                          </button>
+                        )}
+                      </div>
                       <button onClick={() => {
                         localStorage.removeItem("kinflix_host_code");
                         window.location.reload();
@@ -2089,11 +2197,25 @@ function App() {
                     
                     <h3 className="mt-4 mb-2 text-sm font-semibold text-zinc-400">Yerel IP (Aynı Ev / Wi-Fi İçin):</h3>
                     <div className="bg-black rounded-lg p-2 text-xl font-mono tracking-widest text-blue-400 border border-zinc-800 flex justify-between items-center px-4">
-                      <span>{localIp || "Yükleniyor..."}</span>
+                      <div className="flex items-center gap-3">
+                        <span>{localIp || "Yükleniyor..."}</span>
+                        {localIp && localIp !== "Bilinmiyor" && (
+                          <button onClick={() => { navigator.clipboard.writeText(localIp); showToast("IP kopyalandı!", "📋"); }} className="text-lg text-zinc-500 hover:text-white transition hover:scale-110" title="IP'yi Kopyala">
+                            📋
+                          </button>
+                        )}
+                      </div>
                       {generateLocalShortCode(localIp) && (
-                        <span className="text-sm bg-blue-900/30 text-blue-300 px-3 py-1 rounded border border-blue-800/50 flex flex-col items-center">
+                        <span 
+                          onClick={() => { navigator.clipboard.writeText(generateLocalShortCode(localIp)); showToast("TV Kodu kopyalandı!", "📋"); }}
+                          className="text-sm bg-blue-900/30 text-blue-300 px-3 py-1 rounded border border-blue-800/50 flex flex-col items-center cursor-pointer hover:bg-blue-800/60 transition"
+                          title="TV Kodunu Kopyala"
+                        >
                           <span className="text-[10px] uppercase tracking-wider text-blue-500 font-bold mb-0.5">TV Kısa Kodu</span>
-                          <span>{generateLocalShortCode(localIp)}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span>{generateLocalShortCode(localIp)}</span>
+                            <span className="text-xs opacity-50">📋</span>
+                          </div>
                         </span>
                       )}
                     </div>
@@ -2257,7 +2379,7 @@ function App() {
                 className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${bgVideoPlaying ? 'opacity-0' : 'opacity-100'}`} 
               />
             )}
-            {bgVideoPlaying && !selectedMovie.video_path.startsWith("torrent-") && (
+{bgVideoPlaying && !selectedMovie.video_path.startsWith("torrent-") && (
               <>
                 <video 
                   src={tauriConvertFileSrc ? tauriConvertFileSrc(selectedMovie.video_path) : ""} 
@@ -2265,13 +2387,8 @@ function App() {
                   autoPlay
                   className="absolute inset-0 w-full h-full object-cover opacity-60 animate-in fade-in duration-1000"
                   onLoadedMetadata={(e) => { 
+                    // Sadece filmin yarısına (0.5) sarsın yeter, başka bir koda ihtiyacı yok
                     e.currentTarget.currentTime = ((selectedMovie.runtime || 120) * 60) * 0.5; 
-                  }}
-                  onTimeUpdate={(e) => {
-                    const startTime = ((selectedMovie.runtime || 120) * 60) * 0.5;
-                    if (e.currentTarget.currentTime >= startTime + 15) {
-                      e.currentTarget.currentTime = startTime; 
-                    }
                   }}
                 />
                 
@@ -2306,6 +2423,18 @@ function App() {
               <button onClick={() => startPlayer()} className="flex items-center justify-center gap-2 rounded bg-white px-8 py-3 text-xl font-bold text-black transition hover:bg-zinc-200">
                 <span className="text-2xl">▶</span> {(selectedMovie.progress || 0) > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb ? t.resume : t.play}
               </button>
+
+              {/* 3D SİNEMA MODU BUTONU BURAYA GELECEK */}
+              <button 
+                onClick={() => {
+                  startPlayer(); // Önce filmi normal oynatıcıda başlatıyoruz (videoRef oluşsun diye)
+                  setTimeout(() => setIsVirtualTheaterOpen(true), 800); // 800ms sonra 3D salonu açıyoruz
+                }}
+                className="flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border bg-purple-600/20 border-purple-500/50 hover:bg-purple-600/40 hover:border-purple-400"
+              >
+                👓 3D Sinema Modu
+              </button>
+
                 {!isWeb && !selectedMovie.video_path.startsWith("torrent-") && (
                   <div className="mt-4 max-w-sm w-full">
                     {convertingMoviePath === selectedMovie.video_path ? (
@@ -2341,6 +2470,7 @@ function App() {
                         <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 24 24" height="1.2em" width="1.2em" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"></path></svg>
                         {t.convertToX264}
                       </button>
+
                     )}
                   </div>
                 )}
@@ -2514,7 +2644,7 @@ function App() {
           onClick={() => {if(showSubMenu) setShowSubMenu(false); if(showSpeedMenu) setShowSpeedMenu(false);}} 
           className={`fixed inset-0 z-[100] bg-black flex flex-col group ${showControls ? "controls-visible" : "controls-hidden"}`}
         >
-          <video
+<video
             ref={videoRef} 
             crossOrigin="anonymous" 
             src={getSafeVideoSource()} 
@@ -2522,25 +2652,42 @@ function App() {
             playsInline
             onClick={togglePlay}
             onTimeUpdate={(e) => { 
-              if (isRemoteStreaming && connModeRef.current === 'webrtc') return;
+              // 1. MİSAFİR KENDİ KAFASINA GÖRE SÜRE GÜNCELLEYEMEZ
+              if (isRemoteStreaming && !isHostRef.current) return;
 
-              const cTime = e.currentTarget.currentTime;
+              // 2. MKV 10 SANİYE/BAŞA SARMA ÇÖZÜMÜ (Offset'i ekliyoruz)
+              const cTime = e.currentTarget.currentTime + transcodeOffsetRef.current;
               setCurrentTime(cTime);
 
+              // 3. HOST İSE ZAMANI MİSAFİRLERE YAYINLA
               if (isHostRef.current && partyStatusRef.current === 'connected') {
                 if (Math.floor(cTime) !== lastSyncTimeRef.current) {
                   lastSyncTimeRef.current = Math.floor(cTime);
-                  broadcastEvent("sync_time", { time: cTime, duration: e.currentTarget.duration });
+                  
+                  // MKV Infinity verirse TMDB süresini (runtime * 60) yedek olarak gönder
+                  const safeDuration = (e.currentTarget.duration && e.currentTarget.duration !== Infinity) 
+                    ? e.currentTarget.duration 
+                    : ((selectedMovieRef.current?.runtime || 120) * 60);
+                    
+                  broadcastEvent("sync_time", { time: cTime, duration: safeDuration });
                 }
               }
             }}
             onLoadedMetadata={(e) => { 
-              if (isRemoteStreaming && connModeRef.current === 'webrtc') return;
+              if (isRemoteStreaming && !isHostRef.current) return;
 
-              setDuration(e.currentTarget.duration); 
+              // MKV transcode yüzünden süre bozuk gelirse kütüphaneden çek
+              const actualDuration = (e.currentTarget.duration && e.currentTarget.duration > 0 && e.currentTarget.duration !== Infinity) 
+                 ? e.currentTarget.duration 
+                 : (selectedMovieRef.current?.runtime || 120) * 60;
               
+              setDuration(actualDuration); 
+              
+              // Kalındığı yerden devam etme (Sadece sıfırdan başlıyorsa)
               if ((selectedMovie.progress || 0) > 0 && !isWeb && !isRemoteStreaming && !selectedMovie.video_path.startsWith("torrent-")) {
-                e.currentTarget.currentTime = selectedMovie.progress!;
+                if (transcodeOffsetRef.current === 0) {
+                  e.currentTarget.currentTime = selectedMovie.progress!;
+                }
               }
             }}
             className="h-full w-full object-contain cursor-pointer"
@@ -2732,7 +2879,15 @@ function App() {
                             <button onClick={(e) => {e.stopPropagation(); updateSubDelay(idx, 0.5)}} className="w-6 h-6 rounded flex items-center justify-center text-xs bg-zinc-800 hover:bg-zinc-700 text-white">+</button>
                           </div>
                         )}
+                        <button 
+    onClick={handleGenerateAISubtitle} 
+    disabled={isGeneratingSub}
+    className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-bold transition disabled:opacity-50"
+  >
+    {isGeneratingSub ? "⏳ Dinleniyor & Çevriliyor..." : "🤖 AI ile Altyazı Üret"}
+  </button>
                       </div>
+                      
                     ))}
                     
                     {!isTV && (
@@ -2985,7 +3140,15 @@ function App() {
               Devam Et 🚀
             </button>
           </div>
+          
         </div>
+      )}
+      {/* --- 3D SANAL SİNEMA MODU BURAYA GELECEK --- */}
+      {isVirtualTheaterOpen && videoRef.current && (
+        <VirtualTheater 
+          videoElement={videoRef.current} 
+          onClose={() => setIsVirtualTheaterOpen(false)} 
+        />
       )}
     </div>
   );
