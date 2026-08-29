@@ -36,10 +36,18 @@ export async function getMovieDetails(tmdbId: number, token: string, lang: strin
   return await tmdbRequest<TMDBMovieDetails>(`/movie/${tmdbId}?language=${tmdbLang}&append_to_response=credits`, token);
 }
 
-export async function getMovieMetadata(title: string, year: number | null, token: string, lang: string): Promise<MovieMetadata | null> {
-  const movie = await searchMovie(title, year, token, lang);
+export async function getMovieMetadata(title: string, year: number | null, userToken: string, lang: string) {
+  // Eğer kullanıcı kendi token'ını girmediyse, kodun içine gömdüğümüz güvenli yedek token'ı kullan
+  const activeToken = userToken && userToken.trim() !== "" ? userToken : "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJjZmJmZmQyMmRiNDlkMWZjN2UxODg4YzhiMjA2YzM2MCIsIm5iZiI6MTc4NzgxODk0Ni44MDQsInN1YiI6IjZhOGZmM2MyMzM0NDdkNTEyNjMwNTJkZSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.vhkano8PDFbETkVhPNHqJpqx8X4o1tTAK5N6pKKPnbA";
+  
+  if (!activeToken || activeToken.startsWith("BURAYA")) {
+    return null; // Token yoksa sessizce geç
+  }
+  
+  // DİKKAT: Buradaki 'token' değişkenleri 'activeToken' olarak güncellendi!
+  const movie = await searchMovie(title, year, activeToken, lang);
   if (!movie) return null;
-  const details = await getMovieDetails(movie.id, token, lang);
+  const details = await getMovieDetails(movie.id, activeToken, lang);
 
   let director = null;
   let actorsStr = null;
@@ -58,7 +66,7 @@ export async function getMovieMetadata(title: string, year: number | null, token
     rating: movie.vote_average,
     overview: movie.overview || null,
     runtime: details.runtime,
-    genres: details.genres ? details.genres.map((g) => g.name).join(", ") : null,
+    genres: details.genres ? details.genres.map((g: any) => g.name).join(", ") : null,
     director: director,
     actors: actorsStr,
     collection_name: details.belongs_to_collection ? details.belongs_to_collection.name : null,

@@ -29,7 +29,6 @@ const MovieCardFallback = ({ movie }: { movie: Movie }) => (
     <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-3">
       <h3 className="text-white font-bold text-sm line-clamp-2 leading-tight mb-1">{movie.title}</h3>
       {movie.year ? <span className="text-zinc-400 text-xs font-semibold">{movie.year}</span> : null}
-      {/* YENİ: movie.progress için güvenlik kontrolü (undefined hatasını önler) */}
       {(movie.progress || 0) > 5 && (movie.is_watched || 0) === 0 && (
         <div className="w-full h-1 bg-zinc-700 rounded-full mt-2 overflow-hidden">
           <div className="h-full bg-red-600" style={{ width: `${Math.min(((movie.progress || 0) / ((movie.runtime || 120) * 60)) * 100, 100)}%` }}></div>
@@ -84,7 +83,6 @@ const dict = {
     resetDb: "Veritabanını Sıfırla", language: "Arayüz Dili", subs: "Altyazılar", subOff: "Kapalı", searchSubTr: "Altyazı (TR)", searchSubEn: "Altyazı (EN)",
     party: "Party Watch", joinLabel: "Odaya Katıl (Kod veya IP):", connect: "Bağlan", connected: "Bağlantı Başarılı!", disconnected: "Bağlı Değil",
     random: "🎲 Rastgele", chatMsg: "Mesaj yaz...", send: "Gönder",
-    // YENİ DİL ANAHTARLARI
     min: "dk", h: "s", m: "dk",
     forYouTitle: "✨ Sana Özel Algoritma", forYouDesc: "Beğendiğin filmlerin ağırlık grafiğine göre senin için seçilenler.",
     ytsTitle: "🏴‍☠️ YTS Dünyası", ytsDesc: "P2P Torrent Streaming", ytsLoading: "Korsan ağlara bağlanılıyor...",
@@ -111,7 +109,6 @@ const dict = {
     resetDb: "Reset Database", language: "Interface Language", subs: "Subtitles", subOff: "Off", searchSubTr: "Search Sub (TR)", searchSubEn: "Search Sub (EN)",
     party: "Party Watch", joinLabel: "Join Room (Code or IP):", connect: "Connect", connected: "Connected!", disconnected: "Disconnected",
     random: "🎲 Random", chatMsg: "Type a message...", send: "Send",
-    // NEW ENG KEYS
     min: "m", h: "h", m: "m",
     forYouTitle: "✨ For You", forYouDesc: "Movies selected for you based on the weighted graph of your liked genres.",
     ytsTitle: "🏴‍☠️ YTS Discovery", ytsDesc: "P2P Torrent Streaming", ytsLoading: "Connecting to peer networks...",
@@ -225,11 +222,21 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState<any>(null);
   const [isUpdating, setIsUpdating] = useState(false);
 
+  const [tauriConvertFileSrc, setTauriConvertFileSrc] = useState<any>(null);
+  
+  useEffect(() => {
+    if (!isWeb) { import("@tauri-apps/api/core").then(({ convertFileSrc }) => setTauriConvertFileSrc(() => convertFileSrc)); }
+  }, []);
+
   const [activeTab, setActiveTab] = useState<TabState>("home");
   const [movies, setMovies] = useState<Movie[]>([]);
   const [scanning, setScanning] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Party Mode - Lobi State'leri
+  const [hostName, setHostName] = useState<string>("Bilinmiyor");
+  const [connectedGuests, setConnectedGuests] = useState<{id: string, name: string}[]>([]);
 
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -244,7 +251,41 @@ function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
-  // "Bana Film Bul" Sihirbazı State'leri
+  // Ses Güçlendirici (Voice Booster) State ve Referansları
+  const [isVoiceBoosted, setIsVoiceBoosted] = useState(false);
+  const audioCtxRef = useRef<any>(null);
+  const sourceNodeRef = useRef<any>(null);
+  const compressorRef = useRef<any>(null);
+
+  // x265 to x264 Çeviri State'leri
+  const [convertingMoviePath, setConvertingMoviePath] = useState<string | null>(null);
+  const [convertProgress, setConvertProgress] = useState<number>(0);
+  
+  useEffect(() => {
+    if (isWeb) return;
+    
+    let unlisten: any;
+    const setupListener = async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen('convert-progress', (event: any) => {
+          setConvertingMoviePath(event.payload.path);
+          setConvertProgress(event.payload.progress);
+          
+          if (event.payload.progress >= 100) {
+            setConvertingMoviePath(null);
+            showToast("Çeviri Tamamlandı! Artık oynatabilirsiniz.", "✅");
+          }
+        });
+      } catch (e) {
+        console.error("Event listener kurulamadı", e);
+      }
+    };
+    
+    setupListener();
+    return () => { if (unlisten) unlisten(); };
+  }, [isWeb]);
+
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardFilters, setWizardFilters] = useState({ duration: "any", year: "any", rating: "any" });
   const [wizardResult, setWizardResult] = useState<Movie | null>(null);
@@ -277,7 +318,7 @@ function App() {
       const randomMatch = filtered[Math.floor(Math.random() * filtered.length)];
       setWizardResult(randomMatch);
       setIsWizardSpinning(false);
-    }, 1500); // 1.5 Saniye Rulet Animasyonu
+    }, 1500); 
   };
   
   const [volume, setVolume] = useState(1);
@@ -297,9 +338,7 @@ function App() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [osError, setOsError] = useState<string | null>(null);
 
-  
-
-  // 1. Altyazı Özelleştirme Stateleri
+  // Altyazı Özelleştirme
   const [subSettings, setSubSettings] = useState({
     color: localStorage.getItem("kinflix_sub_color") || "text-white",
     size: localStorage.getItem("kinflix_sub_size") || "2.4vw",
@@ -312,12 +351,11 @@ function App() {
     localStorage.setItem("kinflix_sub_"+key, val);
   };
 
-  // 2. Oyuncu/Yönetmen Keşif Modalı State'i
+  // Oyuncu/Yönetmen Keşif Modalı
   const [personModal, setPersonModal] = useState<{name: string, photoUrl: string | null} | null>(null);
 
   const handlePersonClick = async (name: string) => {
     setPersonModal({ name, photoUrl: null });
-    // TMDB Token varsa oyuncunun fotoğrafını arka planda çek
     if (tmdbToken && !isWeb) {
       try {
         const res = await fetch(`https://api.themoviedb.org/3/search/person?query=${encodeURIComponent(name)}`, { 
@@ -331,7 +369,6 @@ function App() {
     }
   };
 
-
   const [themeColor, setThemeColor] = useState(localStorage.getItem("kinflix_theme") || "red");
 
   const [isPartyMenuOpen, setIsPartyMenuOpen] = useState(isWeb); 
@@ -341,12 +378,12 @@ function App() {
   const [partyStatus, setPartyStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [connMode, setConnMode] = useState<"none" | "webrtc" | "ip">("none");
 
-const [bgVideoPlaying, setBgVideoPlaying] = useState(false);
-  const [isBgMuted, setIsBgMuted] = useState(true); // YENİ: Arkaplan ses kontrol state'i
+  const [bgVideoPlaying, setBgVideoPlaying] = useState(false);
+  const [isBgMuted, setIsBgMuted] = useState(true);
 
   useEffect(() => {
     if (selectedMovie && !isPlaying) {
-      setIsBgMuted(true); // Yeni filme tıklandığında ses her zaman varsayılan olarak kapalı (güvenli) başlasın
+      setIsBgMuted(true);
       const timer = setTimeout(() => setBgVideoPlaying(true), 2500); 
       return () => { clearTimeout(timer); setBgVideoPlaying(false); };
     }
@@ -372,11 +409,128 @@ const [bgVideoPlaying, setBgVideoPlaying] = useState(false);
   const [runtimeFormat, setRuntimeFormat] = useState<"min" | "hour">("min");
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
-  // YTS ve Profil Stateleri
   const [ytsMovies, setYtsMovies] = useState<any[]>([]);
   const [isFetchingYts, setIsFetchingYts] = useState(false);
   
   const torrentClient = useRef<any>(null);
+
+  const togglePlay = () => {
+    if (videoRef.current && !isRemoteStreaming) { 
+      const time = videoRef.current.currentTime;
+      if (isVideoPlaying) { videoRef.current.pause(); broadcastEvent("pause", { time }); } 
+      else { videoRef.current.play(); broadcastEvent("play", { time }); }
+      setIsVideoPlaying(!isVideoPlaying);
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement && playerContainerRef.current) { playerContainerRef.current.requestFullscreen(); } 
+    else if (document.fullscreenElement) { document.exitFullscreen(); }
+  };
+
+  const handleSeek = (timeVal: number) => {
+    if(isRemoteStreaming) return; 
+    if (videoRef.current) videoRef.current.currentTime = timeVal;
+    setCurrentTime(timeVal);
+    broadcastEvent("seek", { time: timeVal });
+  };
+
+  const toggleMute = () => {
+    if(videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); }
+  };
+
+  const toggleVoiceBoost = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!videoRef.current) return;
+
+    try {
+      if (!audioCtxRef.current) {
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        audioCtxRef.current = new AudioContext();
+        sourceNodeRef.current = audioCtxRef.current.createMediaElementSource(videoRef.current);
+        compressorRef.current = audioCtxRef.current.createDynamicsCompressor();
+        
+        compressorRef.current.threshold.value = -30;
+        compressorRef.current.knee.value = 10;
+        compressorRef.current.ratio.value = 12;
+        compressorRef.current.attack.value = 0.003;
+        compressorRef.current.release.value = 0.25;
+      }
+
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+
+      if (!isVoiceBoosted) {
+        sourceNodeRef.current.disconnect();
+        sourceNodeRef.current.connect(compressorRef.current);
+        compressorRef.current.connect(audioCtxRef.current.destination);
+        setIsVoiceBoosted(true);
+        showToast("Ses Güçlendirici: AÇIK 🔉", "🚀");
+      } else {
+        sourceNodeRef.current.disconnect();
+        compressorRef.current.disconnect();
+        sourceNodeRef.current.connect(audioCtxRef.current.destination);
+        setIsVoiceBoosted(false);
+        showToast("Ses Güçlendirici: KAPALI", "🔇");
+      }
+    } catch (error) {
+      console.error("Web Audio API Hatası:", error);
+      showToast("Ses güçlendirici bu videoda desteklenmiyor.", "❌");
+    }
+  };
+
+  // Klavye Kısayolları
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      switch(e.key.toLowerCase()) {
+        case ' ':
+        case 'k':
+          e.preventDefault();
+          togglePlay();
+          break;
+        case 'f':
+          e.preventDefault();
+          toggleFullscreen();
+          break;
+        case 'm':
+          e.preventDefault();
+          toggleMute();
+          break;
+        case 'b':
+          e.preventDefault();
+          toggleVoiceBoost();
+          break;
+        case 'arrowright':
+          e.preventDefault();
+          if (videoRef.current) handleSeek(videoRef.current.currentTime + 10);
+          break;
+        case 'arrowleft':
+          e.preventDefault();
+          if (videoRef.current) handleSeek(videoRef.current.currentTime - 10);
+          break;
+        case 'arrowup':
+          e.preventDefault();
+          const newVolUp = Math.min(volume + 0.1, 1);
+          setVolume(newVolUp);
+          if (videoRef.current) videoRef.current.volume = newVolUp;
+          break;
+        case 'arrowdown':
+          e.preventDefault();
+          const newVolDown = Math.max(volume - 0.1, 0);
+          setVolume(newVolDown);
+          if (videoRef.current) videoRef.current.volume = newVolDown;
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPlaying, volume, isVoiceBoosted]);
 
   useEffect(() => {
     torrentClient.current = new WebTorrent();
@@ -540,7 +694,6 @@ const [bgVideoPlaying, setBgVideoPlaying] = useState(false);
     return { total: movies.length, watchedCount: watched.length, hours, favGenre };
   }, [movies]);
 
-  // YENİ: libraryMovies, recommendedMovies, YTS Effect DOĞRU YERDE!
   const libraryMovies = useMemo(() => {
     let filtered = movies.filter(movie => {
       const q = searchQuery.toLowerCase();
@@ -583,7 +736,7 @@ const [bgVideoPlaying, setBgVideoPlaying] = useState(false);
     return recommendations.length > 0 ? recommendations : topRated;
   }, [movies, likedMovies, topRated]);
 
-// YTS.mx API Çağrısı (Türkiye Engeli İçin Yedekli Mirror Sistemi)
+  // YTS API Çağrısı
   useEffect(() => {
     if (activeTab === "yts" && ytsMovies.length === 0) {
       setIsFetchingYts(true);
@@ -602,7 +755,7 @@ const [bgVideoPlaying, setBgVideoPlaying] = useState(false);
             const data = await res.json();
             if (data?.data?.movies) {
               setYtsMovies(data.data.movies);
-              return; // İlk çalışan mirror'da veriyi al ve döngüden çık
+              return; 
             }
           } catch (err) {
             console.warn(`${url} engelli, diğerine geçiliyor...`);
@@ -657,6 +810,8 @@ const [bgVideoPlaying, setBgVideoPlaying] = useState(false);
           const storedMovies = await getMovies(activeProfile || "default");
           setMovies(storedMovies);
           initPeerHost();
+          // HOST: Yerel WebSocket ağına da dahil ol (Aynı ağdan gelen misafirleri dinlemek için)
+          connectWebSocket("127.0.0.1");
         } catch (error) { setError(String(error)); }
       } else {
         const savedLang = localStorage.getItem("kinflix_language");
@@ -703,7 +858,7 @@ const [bgVideoPlaying, setBgVideoPlaying] = useState(false);
   useEffect(() => { targetAddressRef.current = targetAddress; }, [targetAddress]);
   useEffect(() => { localIpRef.current = localIp; }, [localIp]);
 
-const forceUpdateCheck = async () => {
+  const forceUpdateCheck = async () => {
     setIsCheckingUpdate(true);
     try {
       const { check } = await import('@tauri-apps/plugin-updater');
@@ -758,6 +913,7 @@ const forceUpdateCheck = async () => {
     
     setTimeout(() => {
       initPeerHost(); 
+      if (!isWeb) connectWebSocket("127.0.0.1"); 
     }, 500);
   };
 
@@ -791,18 +947,23 @@ const forceUpdateCheck = async () => {
     } catch (error) { setError(String(error)); } finally { setScanning(false); }
   }
 
-  async function syncMovieMetadata() {
+ async function syncMovieMetadata() {
     if (syncing || isWeb) return;
     if (!tmdbToken) { setIsSettingsOpen(true); return; }
     setSyncing(true); setError(null);
     try {
       const storedMovies = await getMovies(activeProfile || "default");
+      
+      // YENİ: Sadece daha önce metadata çekilmemiş (yeni eklenen) filmlere öncelik ver
+      const pendingMovies = storedMovies.filter(m => !m.overview || m.overview.trim() === "");
+      const targetMovies = pendingMovies.length > 0 ? pendingMovies : storedMovies;
+
       let successCount = 0;
       let failCount = 0;
       const batchSize = 5;
 
-      for (let i = 0; i < storedMovies.length; i += batchSize) {
-        const batch = storedMovies.slice(i, i + batchSize);
+      for (let i = 0; i < targetMovies.length; i += batchSize) {
+        const batch = targetMovies.slice(i, i + batchSize);
         await Promise.all(batch.map(async (movie) => {
           try {
             let cleanTitle = movie.title
@@ -823,12 +984,12 @@ const forceUpdateCheck = async () => {
           }
         }));
         
-        if (i + batchSize < storedMovies.length) {
+        if (i + batchSize < targetMovies.length) {
           await new Promise(r => setTimeout(r, 400));
         }
       }
       setMovies(await getMovies(activeProfile || "default"));
-      alert(`✅ TMDB Eşitleme Tamamlandı!\n\n✔ Başarılı: ${successCount}\n❌ Başarısız/Bulunamadı: ${failCount}`);
+      showToast(`✅ Yeni filmler eşitlendi! Başarılı: ${successCount}`, "🚀");
     } catch (error) { setError(String(error)); } finally { setSyncing(false); }
   }
 
@@ -864,6 +1025,7 @@ const forceUpdateCheck = async () => {
   const changeSubtitle = (idx: number) => {
     setActiveSubIndex(idx);
     setShowSubMenu(false);
+    if (selectedMovie) localStorage.setItem("kinflix_sub_" + selectedMovie.video_path, idx.toString());
     if (isHostRef.current && partyStatusRef.current === 'connected') { broadcastEvent("change_sub_index", { activeIndex: idx }); }
   };
 
@@ -933,6 +1095,7 @@ const forceUpdateCheck = async () => {
       setLocalSubs(prev => {
         const newSubs = [...prev, { id: `stremio_${sub.id}`, url: "", label: `🌐 ${sub.lang.toUpperCase()} - Stremio`, srtContent: content, offset: 0, cues }];
         setActiveSubIndex(newSubs.length - 1);
+        if (selectedMovie) localStorage.setItem("kinflix_sub_" + selectedMovie.video_path, (newSubs.length - 1).toString());
         if (isHostRef.current && partyStatusRef.current === 'connected') { broadcastEvent("sync_subs", { subs: newSubs, activeIndex: newSubs.length - 1 }); }
         return newSubs;
       });
@@ -950,7 +1113,8 @@ const forceUpdateCheck = async () => {
 
   const handleSendChatText = () => {
     if (!chatInput.trim()) return;
-    const authorName = guestName || (isHost ? "Host" : "Misafir");
+    const activeName = profiles.find(p => p.id === activeProfile)?.name;
+    const authorName = guestName || (isHost ? activeName || "Host" : "Misafir");
     const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: authorName, type: "text", content: chatInput, timestamp: Date.now() };
     saveChatMessage(msg);
     broadcastEvent("chat_msg", { msg });
@@ -963,7 +1127,8 @@ const forceUpdateCheck = async () => {
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const base64 = ev.target?.result as string;
-      const authorName = guestName || (isHost ? "Host" : "Misafir");
+      const activeName = profiles.find(p => p.id === activeProfile)?.name;
+      const authorName = guestName || (isHost ? activeName || "Host" : "Misafir");
       const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: authorName, type: "image", content: base64, timestamp: Date.now() };
       saveChatMessage(msg);
       broadcastEvent("chat_msg", { msg });
@@ -1024,8 +1189,18 @@ const forceUpdateCheck = async () => {
         }
       }
       else if (data.action === "request_catalog" && hostMode) {
-        showToast("Bir misafir odaya bağlandı!", "👋");
-        broadcastEvent("catalog", { catalog: moviesRef.current });
+        if (data.guestName) {
+           setConnectedGuests(prev => {
+              if (!prev.find(g => g.name === data.guestName)) return [...prev, {id: Date.now().toString(), name: data.guestName}];
+              return prev;
+           });
+           showToast(`${data.guestName} odaya bağlandı!`, "👋");
+        } else {
+           showToast("Bir misafir odaya bağlandı!", "👋");
+        }
+
+        const activeProfileName = profiles.find(p => p.id === activeProfile)?.name || "Host";
+        broadcastEvent("catalog", { catalog: moviesRef.current, hostName: activeProfileName });
         
         if (selectedMovieRef.current) {
            broadcastEvent("load", { movie: selectedMovieRef.current });
@@ -1047,6 +1222,7 @@ const forceUpdateCheck = async () => {
       }
       else if (data.action === "catalog" && !hostMode) {
         setMovies(data.catalog);
+        if (data.hostName) setHostName(data.hostName);
       }
       else if (data.action === "request_movie" && hostMode) {
         startPlayer(data.movie);
@@ -1180,8 +1356,7 @@ const forceUpdateCheck = async () => {
         
         setTimeout(() => {
           if (connRef.current?.open) {
-            connRef.current.send({ action: "request_catalog" });
-            setTimeout(() => connRef.current?.send({ action: "request_catalog" }), 2000);
+            connRef.current.send({ action: "request_catalog", guestName: guestName || localStorage.getItem("kinflix_guest_name") || "Misafir" });
           }
         }, 500);
       });
@@ -1224,7 +1399,7 @@ const forceUpdateCheck = async () => {
       
       setTimeout(() => {
         if (!hostStatus && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ action: "request_catalog" }));
+          wsRef.current.send(JSON.stringify({ action: "request_catalog", guestName: guestName || localStorage.getItem("kinflix_guest_name") || "Misafir" }));
         }
       }, 500);
     };
@@ -1294,18 +1469,11 @@ const forceUpdateCheck = async () => {
     });
     
     peer.on('call', (call) => {
-      console.log("📞 INCOMING PEER CALL:", call.metadata);
-
       if (call.metadata?.type === "movie") {
-        console.log("🎬 Incoming movie stream");
         call.answer();
         call.on("stream", (videoStream) => {
-          console.log("🎥 MOVIE STREAM RECEIVED");
           _setRemoteStream(videoStream);
           setIsRemoteStreaming(true);
-        });
-        call.on("error", (err) => {
-          console.error("🎬 MOVIE CALL ERROR:", err);
         });
         return;
       }
@@ -1325,55 +1493,14 @@ const forceUpdateCheck = async () => {
   };
 
   const broadcastEvent = (action: string, payload: any = {}) => {
-    if (connModeRef.current === 'webrtc' && connRef.current?.open) { connRef.current.send({ action, ...payload }); } 
-    else if (connModeRef.current === 'ip' && wsRef.current?.readyState === WebSocket.OPEN) { wsRef.current.send(JSON.stringify({ action, ...payload })); }
+    if (connRef.current?.open) { connRef.current.send({ action, ...payload }); } 
+    if (wsRef.current?.readyState === WebSocket.OPEN) { wsRef.current.send(JSON.stringify({ action, ...payload })); }
   };
 
   const handleMovieClick = (movie: Movie) => {
-    if (!isHostRef.current && partyStatusRef.current === 'connected') { 
-      broadcastEvent("request_movie", { movie }); 
-    } else { 
-      setSelectedMovie(movie); 
-    }
+    setSelectedMovie(movie);
+    setBgVideoPlaying(false); 
   };
-
-  const [tauriConvertFileSrc, setTauriConvertFileSrc] = useState<any>(null);
-  useEffect(() => {
-    if (!isWeb) { import("@tauri-apps/api/core").then(({ convertFileSrc }) => setTauriConvertFileSrc(() => convertFileSrc)); }
-  }, []);
-
-  const getSafeVideoSource = () => {
-    if (!selectedMovie || selectedMovie.video_path.startsWith("torrent-")) return ""; 
-    const isHevc = /265|hevc/i.test(selectedMovie.video_path);
-    
-    if (isRemoteStreaming && connModeRef.current === 'ip') {
-      const baseUrl = targetAddressRef.current.startsWith("http") ? targetAddressRef.current : `http://${targetAddressRef.current}:8765`;
-      return isHevc 
-        ? `${baseUrl}/transcode?path=${encodeURIComponent(selectedMovie.video_path)}`
-        : `${baseUrl}/video?path=${encodeURIComponent(selectedMovie.video_path)}&quality=720p`;
-    }
-    
-    if (isRemoteStreaming && connModeRef.current === 'webrtc') return "";
-    
-    if (isWeb) return "";
-
-    if (partyStatusRef.current === 'connected' && connModeRef.current === 'webrtc') {
-      return `http://127.0.0.1:8765/video?path=${encodeURIComponent(selectedMovie.video_path)}`;
-    }
-
-    return tauriConvertFileSrc ? tauriConvertFileSrc(selectedMovie.video_path) : "";
-  };
-
-  useEffect(() => {
-    if (videoRef.current && isRemoteStreaming && connModeRef.current === 'webrtc' && remoteStream) {
-      videoRef.current.src = ""; 
-      videoRef.current.srcObject = remoteStream;
-      videoRef.current.play().catch(e => {
-        console.log("Otomatik oynatma engellendi, tıklama bekleniyor:", e);
-        setIsVideoPlaying(false);
-      });
-    }
-  }, [remoteStream, isRemoteStreaming, selectedMovie]);
 
   const streamYtsMovie = (ytsMovie: any) => {
     if (!ytsMovie.torrents || ytsMovie.torrents.length === 0) {
@@ -1417,13 +1544,19 @@ const forceUpdateCheck = async () => {
   const startPlayer = async (movieOverride?: Movie) => {
     const movieToPlay = movieOverride || selectedMovie;
     if (!movieToPlay) return;
-    setIsRemoteStreaming(false);
+
+    if (!isHostRef.current && partyStatusRef.current === 'connected' && connModeRef.current === 'webrtc') {
+      showToast("WebRTC modunda filmi sadece Oda Kurucusu değiştirebilir. HTTP/IP modunda özgürce izleyebilirsiniz.", "⚠️");
+      return;
+    }
+
+    setIsRemoteStreaming(!isHostRef.current && partyStatusRef.current === 'connected');
 
     if (isHostRef.current && partyStatusRef.current === 'connected') { 
       broadcastEvent("load", { movie: movieToPlay }); 
     }
 
-    if (!isWeb && !movieToPlay.video_path.startsWith("torrent-")) {
+    if (!isWeb && !movieToPlay.video_path.startsWith("torrent-") && isHostRef.current) {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
         const srtFiles = await invoke<string[]>("get_local_subtitles", { video_path: movieToPlay.video_path });
@@ -1436,9 +1569,12 @@ const forceUpdateCheck = async () => {
           subs.push({ id: `local_${i}`, url: "", label, srtContent: content, offset: 0, cues: parseSrtToCues(content, 0) });
         }
         setLocalSubs(subs);
-        const activeIdx = subs.length > 0 ? 0 : -1;
+        
+        const savedIdxStr = localStorage.getItem("kinflix_sub_" + movieToPlay.video_path);
+        const activeIdx = savedIdxStr && !isNaN(parseInt(savedIdxStr)) ? Math.min(parseInt(savedIdxStr), subs.length - 1) : (subs.length > 0 ? 0 : -1);
         setActiveSubIndex(activeIdx); 
-        if (isHostRef.current && partyStatusRef.current === 'connected') { broadcastEvent("sync_subs", { subs, activeIndex: activeIdx }); }
+        
+        if (partyStatusRef.current === 'connected') { broadcastEvent("sync_subs", { subs, activeIndex: activeIdx }); }
       } catch (error) {}
     }
     
@@ -1511,7 +1647,7 @@ const forceUpdateCheck = async () => {
     if (document.fullscreenElement) document.exitFullscreen();
   };
 
-const formatTime = (time: number) => {
+  const formatTime = (time: number) => {
     if (isNaN(time) || !isFinite(time)) return "00:00";
     const totalSeconds = Math.floor(time);
     
@@ -1539,42 +1675,24 @@ const formatTime = (time: number) => {
     if (previewVideoRef.current) previewVideoRef.current.currentTime = time;
   };
 
-  const togglePlay = () => {
-    if (videoRef.current && !isRemoteStreaming) { 
-      const time = videoRef.current.currentTime;
-      if (isVideoPlaying) { videoRef.current.pause(); broadcastEvent("pause", { time }); } 
-      else { videoRef.current.play(); broadcastEvent("play", { time }); }
-      setIsVideoPlaying(!isVideoPlaying);
-    }
-  };
-
-  const handleSeek = (timeVal: number) => {
+  const handleSeekPlayer = (timeVal: number) => {
     if(isRemoteStreaming) return; 
     if (videoRef.current) videoRef.current.currentTime = timeVal;
     setCurrentTime(timeVal);
     broadcastEvent("seek", { time: timeVal });
   };
 
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVolumeChangePlayer = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
     setVolume(val);
     if(val > 0) setIsMuted(false);
     if(videoRef.current) videoRef.current.volume = val;
   };
 
-  const toggleMute = () => {
-    if(videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); }
-  };
-
   const changePlaybackSpeed = (rate: number) => {
     setPlaybackSpeed(rate); setShowSpeedMenu(false);
     if(videoRef.current) videoRef.current.playbackRate = rate;
     if (isHostRef.current && partyStatusRef.current === 'connected') { broadcastEvent("rate_change", { rate }); }
-  };
-
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement && playerContainerRef.current) { playerContainerRef.current.requestFullscreen(); } 
-    else if (document.fullscreenElement) { document.exitFullscreen(); }
   };
 
   const togglePip = async () => {
@@ -1594,7 +1712,7 @@ const formatTime = (time: number) => {
     }, 3000);
   };
 
-const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
+  const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
     const rowRef = useRef<HTMLDivElement>(null);
     if (data.length === 0) return null;
 
@@ -1620,7 +1738,6 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
       const { scrollLeft, scrollWidth, clientWidth } = rowRef.current;
       const singleSetWidth = scrollWidth / 3;
       
-      // Kusursuz "Sonsuz Kaydırma" İllüzyonu
       if (scrollLeft < singleSetWidth * 0.5) {
         rowRef.current.scrollLeft += singleSetWidth;
       } else if (scrollLeft > singleSetWidth * 2.5 - clientWidth) {
@@ -1654,6 +1771,28 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
     );
   };
 
+  const getSafeVideoSource = () => {
+    if (!selectedMovie || selectedMovie.video_path.startsWith("torrent-")) return ""; 
+    const isHevc = /265|hevc/i.test(selectedMovie.video_path);
+    
+    if (isRemoteStreaming && connModeRef.current === 'ip') {
+      const baseUrl = targetAddressRef.current.startsWith("http") ? targetAddressRef.current : `http://${targetAddressRef.current}:8765`;
+      return isHevc 
+        ? `${baseUrl}/transcode?path=${encodeURIComponent(selectedMovie.video_path)}`
+        : `${baseUrl}/video?path=${encodeURIComponent(selectedMovie.video_path)}&quality=720p`;
+    }
+    
+    if (isRemoteStreaming && connModeRef.current === 'webrtc') return "";
+    if (isWeb) return "";
+
+    if (partyStatusRef.current === 'connected' && connModeRef.current === 'webrtc') {
+      return `http://127.0.0.1:8765/video?path=${encodeURIComponent(selectedMovie.video_path)}`;
+    }
+
+    return tauriConvertFileSrc ? tauriConvertFileSrc(selectedMovie.video_path) : "";
+  };
+
+
   return (
     <div className="min-h-screen bg-[#0b0b0b] text-white relative flex flex-col overflow-hidden">
       {/* SİNEMATİK İNTRO */}
@@ -1675,7 +1814,7 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
         </div>
       )}
 
-      {/* Netflix Stili Kim İzliyor Ekranı */}
+      {/* Kim İzliyor Ekranı */}
       {!activeProfile && (!isWeb || isHost) && (
         <div className="fixed inset-0 z-[5000] bg-[#141414] flex flex-col items-center justify-center animate-in fade-in duration-500">
           <h1 className="text-4xl md:text-5xl font-medium text-white mb-10 tracking-wider text-center">Kim İzliyor?</h1>
@@ -1726,6 +1865,15 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
         <div className="fixed top-8 right-8 z-[9999] flex items-center gap-3 bg-zinc-900 border border-zinc-700 text-white px-6 py-4 rounded-xl shadow-2xl animate-in slide-in-from-right-10 fade-in duration-300">
           <span className="text-2xl">{toast.icon}</span>
           <span className="font-bold">{toast.text}</span>
+        </div>
+      )}
+
+      {isRemoteStreaming && !isHostRef.current && (
+        <div className="bg-red-600/90 backdrop-blur text-white text-center py-2 text-sm font-bold flex items-center justify-center gap-4 shadow-lg z-50 relative">
+          <span>🎭 {t.guestMode}</span>
+          <span className="opacity-50">|</span>
+          <span className="text-yellow-300">Bağlanılan Host: {hostName !== "Bilinmiyor" ? hostName : targetAddress || "Yerel Ağ"}</span>
+          <button onClick={() => window.location.reload()} className="ml-4 bg-black/30 hover:bg-black/50 px-3 py-1 rounded transition">Ağdan Ayrıl</button>
         </div>
       )}
 
@@ -1829,6 +1977,94 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
         </div>
       </header>
 
+      {/* ANA İÇERİK - MİSSİNG BÖLÜM BURASIYDI */}
+      {(partyStatus === 'connected' || (!isWeb && !isTV)) && (
+        <main className="flex-1 pb-10">
+          {error && <div className="mx-10 mb-6 rounded-xl border border-red-900 bg-red-950/30 p-4 text-red-400">Hata: {error}</div>}
+          {movies.length === 0 && !scanning && !syncing ? (
+            <div className="flex min-h-[50vh] flex-col items-center justify-center px-10">
+              <h3 className="text-2xl font-bold">{t.emptyLib}</h3>
+              <button onClick={() => setIsSettingsOpen(true)} className="mt-6 rounded bg-red-600 px-8 py-3 font-bold transition hover:bg-red-700">{t.clickToStart}</button>
+            </div>
+          ) : (
+            <>
+              {activeTab === "home" && (
+                <div className="animate-in fade-in duration-500">
+                  <HeroBanner movies={movies} onPlay={startPlayer} onInfo={handleMovieClick} t={t} />
+                  <div className="px-10">
+                    <MovieRow title={t.continue} data={continueWatching} />
+                    <MovieRow title={t.watchlist} data={watchListMovies} />
+                    <MovieRow title={t.newReleases} data={newReleases} />
+                    <MovieRow title={t.topRated} data={topRated} />
+                    {homeGenres.map(item => <MovieRow key={item.genre} title={`${item.genre}`} data={item.movies} />)}
+                  </div>
+                </div>
+              )}
+              {activeTab === "collections" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <h2 className="mb-6 text-2xl font-bold">{t.collections}</h2>
+                  {collections.length === 0 ? <div className="text-zinc-500">Herhangi bir koleksiyon bulunamadı.</div> : (
+                    <div>
+                      {collections.map(item => <MovieRow key={item.name} title={`🎬 ${item.name}`} data={item.movies} />)}
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === "watchlist" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <h2 className="mb-6 text-2xl font-bold">{t.watchlist}</h2>
+                  {watchListMovies.length === 0 ? <div className="text-zinc-500">{t.emptyWatchlist}</div> : (
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">{watchListMovies.map((movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}</div>
+                  )}
+                </div>
+              )}
+              {activeTab === "foryou" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <h2 className="mb-2 text-2xl font-bold">✨ Sana Özel Algoritma</h2>
+                  <p className="text-zinc-500 text-sm mb-6">Beğendiğin filmlerin ağırlık grafiğine göre senin için seçilenler.</p>
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                    {recommendedMovies.map((movie: Movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}
+                  </div>
+                </div>
+              )}
+              {activeTab === "yts" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-bold text-green-400">🏴‍☠️ YTS Dünyası</h2>
+                    <span className="text-xs text-zinc-500">P2P Torrent Streaming</span>
+                  </div>
+                  {isFetchingYts ? <div className="text-center text-zinc-500 py-10 animate-pulse">Korsan ağlara bağlanılıyor...</div> : (
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                      {ytsMovies.map((yts: any) => (
+                        <div key={yts.id} className="w-full h-full aspect-[2/3] relative group bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800 hover:border-green-500 transition shadow-lg cursor-pointer" onClick={() => streamYtsMovie(yts)}>
+                          <img src={yts.large_cover_image} alt={yts.title} className="w-full h-full object-cover group-hover:scale-105 transition" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent p-3 flex flex-col justify-end">
+                            <span className="text-green-400 font-bold text-xs mb-1">⭐ {yts.rating}</span>
+                            <span className="text-white font-bold text-sm truncate">{yts.title}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === "library" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <input type="text" placeholder={t.search} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full max-w-xs rounded border border-zinc-800 bg-zinc-900/80 px-4 py-2.5 outline-none transition focus:border-white" />
+                    <div className="flex gap-4">
+                      <select value={selectedGenre} onChange={(e) => setSelectedGenre(e.target.value)} className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none transition focus:border-white"><option value="All">{t.allGenres}</option>{allGenres.map(g => <option key={g} value={g}>{g}</option>)}</select>
+                      <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)} className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none transition focus:border-white"><option value="title_asc">{t.sortAZ}</option><option value="year_desc">{t.sortNew}</option><option value="rating_desc">{t.sortRating}</option></select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">{libraryMovies.map((movie: Movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}</div>
+                </div>
+              )}
+            </>
+          )}
+        </main>
+      )}
+
       {isPartyMenuOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
           <div className="w-full max-w-3xl rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 flex gap-8">
@@ -1916,11 +2152,10 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
         </div>
       )}
 
-{isSettingsOpen && (
+      {isSettingsOpen && (
         <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/90 backdrop-blur-sm px-4 py-8">
           <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl bg-zinc-900 p-8 shadow-2xl relative [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-zinc-900 [&::-webkit-scrollbar-thumb]:bg-zinc-700 [&::-webkit-scrollbar-thumb]:rounded-full">
             
-            {/* KAYDIRILSA BİLE ÜSTTE SABİT KALAN BAŞLIK VE KAPATMA BUTONU */}
             <div className="sticky -top-8 bg-zinc-900 z-50 pt-8 pb-4 mb-6 flex items-center justify-between border-b border-zinc-800">
               <h2 className="text-3xl font-bold">⚙️ {t.settings}</h2>
               <button onClick={() => setIsSettingsOpen(false)} className="text-2xl font-bold text-zinc-400 hover:text-white bg-zinc-800 hover:bg-red-600 w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-lg">✕</button>
@@ -1934,7 +2169,6 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
               </select>
             </div>
 
-            {/* YENİ: Altyazı Özelleştirme */}
             <div className="mb-6 border-b border-zinc-800 pb-6">
               <h3 className="text-white font-bold mb-4">🔤 Altyazı Görünümü</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1989,7 +2223,7 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
                   </div>
                 </div>
 
- <div className="mb-6 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4">
+                <div className="mb-6 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4">
                   <h3 className="text-blue-500 font-bold mb-2">{t.desktopUpdates}</h3>
                   <button disabled={isCheckingUpdate} onClick={forceUpdateCheck} className={`rounded px-4 py-2 text-sm font-bold transition text-white ${isCheckingUpdate ? 'bg-blue-600/50 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}>
                     {isCheckingUpdate ? t.checkingUpdates : t.checkUpdates}
@@ -2016,7 +2250,7 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
       {selectedMovie && !isPlaying && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-[#0b0b0b] animate-in fade-in zoom-in-95 duration-200">
           <button onClick={() => setSelectedMovie(null)} className="absolute left-8 top-8 z-[60] flex h-12 w-12 items-center justify-center rounded-full bg-black/50 text-2xl text-white backdrop-blur-md transition hover:scale-110 hover:bg-white/20 shadow-2xl">✕</button>
-<div className="relative h-[65vh] w-full overflow-hidden">
+          <div className="relative h-[65vh] w-full overflow-hidden">
             {selectedMovie.backdrop_url && (
               <img 
                 src={selectedMovie.backdrop_url} 
@@ -2027,7 +2261,7 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
               <>
                 <video 
                   src={tauriConvertFileSrc ? tauriConvertFileSrc(selectedMovie.video_path) : ""} 
-                  muted={isBgMuted} // YENİ: Ses durumu state'e bağlandı
+                  muted={isBgMuted} 
                   autoPlay
                   className="absolute inset-0 w-full h-full object-cover opacity-60 animate-in fade-in duration-1000"
                   onLoadedMetadata={(e) => { 
@@ -2035,14 +2269,12 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
                   }}
                   onTimeUpdate={(e) => {
                     const startTime = ((selectedMovie.runtime || 120) * 60) * 0.5;
-                    // 15 Saniye ilerlediyse başa (ortaya) sar
                     if (e.currentTarget.currentTime >= startTime + 15) {
                       e.currentTarget.currentTime = startTime; 
                     }
                   }}
                 />
                 
-                {/* YENİ: Arkaplan Sesi Aç/Kapat Butonu */}
                 <button 
                   onClick={(e) => { e.stopPropagation(); setIsBgMuted(!isBgMuted); }}
                   className="absolute bottom-8 right-10 z-[70] flex h-12 w-12 items-center justify-center rounded-full border border-zinc-500 bg-black/40 text-xl text-white backdrop-blur transition hover:scale-110 hover:border-white hover:bg-black/60 shadow-[0_0_15px_rgba(0,0,0,0.5)]"
@@ -2053,7 +2285,8 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
               </>
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0b] via-[#0b0b0b]/60 to-transparent pointer-events-none" />
-          </div>         <div className="relative z-10 -mt-56 max-w-5xl px-10 pb-20">
+          </div>         
+          <div className="relative z-10 -mt-56 max-w-5xl px-10 pb-20">
             <h1 className="text-5xl font-extrabold shadow-black drop-shadow-2xl md:text-7xl">{selectedMovie.title}</h1>
             <div className="mt-6 flex flex-wrap items-center gap-4 text-sm font-semibold text-zinc-300">
               {selectedMovie.rating != null && selectedMovie.rating > 0 && <span className="flex items-center gap-1 text-yellow-500 font-bold text-base">⭐ {selectedMovie.rating.toFixed(1)} IMDB</span>}
@@ -2073,6 +2306,44 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
               <button onClick={() => startPlayer()} className="flex items-center justify-center gap-2 rounded bg-white px-8 py-3 text-xl font-bold text-black transition hover:bg-zinc-200">
                 <span className="text-2xl">▶</span> {(selectedMovie.progress || 0) > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb ? t.resume : t.play}
               </button>
+                {!isWeb && !selectedMovie.video_path.startsWith("torrent-") && (
+                  <div className="mt-4 max-w-sm w-full">
+                    {convertingMoviePath === selectedMovie.video_path ? (
+                      <div className="w-full bg-zinc-900/80 rounded-xl p-4 border border-zinc-700 backdrop-blur">
+                        <div className="flex justify-between text-xs font-bold mb-2">
+                          <span className="text-blue-400 animate-pulse">⏳ x264'e Çevriliyor... İşlemci yanıyor 🔥</span>
+                          <span className="text-white">{convertProgress.toFixed(1)}%</span>
+                        </div>
+                        <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden shadow-inner">
+                          <div 
+                            className="h-full bg-blue-500 transition-all duration-300 shadow-[0_0_10px_rgba(59,130,246,0.8)]" 
+                            style={{ width: `${convertProgress}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            setConvertingMoviePath(selectedMovie.video_path);
+                            setConvertProgress(0);
+                            showToast("Dönüştürme motoru başlatıldı...", "⏳");
+                            const { invoke } = await import('@tauri-apps/api/core');
+                            await invoke('convert_video', { path: selectedMovie.video_path });
+                          } catch (err) {
+                            setConvertingMoviePath(null);
+                            showToast("Çeviri başlatılamadı!", "❌");
+                          }
+                        }} 
+                        className="flex items-center justify-center gap-2 w-full bg-zinc-800 hover:bg-blue-600 text-white text-sm font-bold py-3 px-4 rounded-xl transition border border-zinc-700 hover:border-blue-500 shadow-lg"
+                      >
+                        <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 24 24" height="1.2em" width="1.2em" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"></path></svg>
+                        {t.convertToX264}
+                      </button>
+                    )}
+                  </div>
+                )}
               {!isWeb && <button onClick={() => toggleWatchlist(selectedMovie)} className="flex items-center justify-center gap-2 rounded bg-zinc-800/80 backdrop-blur px-8 py-3 text-xl font-bold text-white transition hover:bg-zinc-700">{selectedMovie.watchlist ? "✓ " + t.inWatchlist : "+ " + t.toWatch}</button>}
               
               {!isWeb && isHost && !selectedMovie.video_path.startsWith("torrent-") && (
@@ -2086,7 +2357,7 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
               <div className="flex-[2]"><p className="text-lg leading-relaxed text-zinc-300">{selectedMovie.overview || t.noOverview}</p></div>
               <div className="flex-1 flex flex-col gap-3 text-sm">
                 {selectedMovie.genres && <p><span className="text-zinc-500">Genres:</span> <span className="text-zinc-300">{selectedMovie.genres}</span></p>}
-{selectedMovie.director && (
+                {selectedMovie.director && (
                   <p><span className="text-zinc-500">Director:</span> {selectedMovie.director.split(',').map((dir, i, arr) => (
                     <span key={i}><span onClick={() => handlePersonClick(dir.trim())} className="text-zinc-300 hover:text-white hover:underline cursor-pointer transition">{dir.trim()}</span>{i < arr.length - 1 ? ', ' : ''}</span>
                   ))}</p>
@@ -2151,16 +2422,44 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
         </button>
       )}
 
+      {/* SOHBET VE LOBİ PENCERESİ */}
       {!isTV && isChatOpen && partyStatus === 'connected' && (
         <div className="fixed right-0 top-0 bottom-0 w-80 bg-zinc-950 border-l border-zinc-800 z-[250] flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
           <div className="p-4 bg-zinc-900 border-b border-zinc-800 flex justify-between items-center shadow-md">
-            <h3 className="font-bold text-white flex items-center gap-2">💬 Party Chat <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span></h3>
+            <h3 className="font-bold text-white flex items-center gap-2">📡 Party Lobi <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span></h3>
             <button onClick={toggleVoiceChat} className={`flex items-center justify-center w-8 h-8 rounded-full transition ${isMicActive ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-zinc-700 hover:bg-zinc-600'}`}>
               {isMicActive ? '🎙️' : '🎤'}
             </button>
             <button onClick={() => setIsChatOpen(false)} className="text-zinc-400 hover:text-white transition ml-2">✕</button>
           </div>
           
+          {/* Lobi Kişileri */}
+          <div className="bg-zinc-950 p-3 border-b border-zinc-800">
+            <p className="text-xs text-zinc-500 font-bold mb-2 uppercase">Odada Kimler Var?</p>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-sm text-yellow-400 font-bold">
+                👑 {isHostRef.current ? (profiles.find(p => p.id === activeProfile)?.name || "Sen (Host)") : hostName}
+              </div>
+              
+              {isHostRef.current ? (
+                connectedGuests.length > 0 ? (
+                  connectedGuests.map((guest, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm text-zinc-300 pl-4 border-l-2 border-zinc-700">
+                      👤 {guest.name}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-xs text-zinc-600 italic pl-4">Henüz kimse katılmadı...</div>
+                )
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-zinc-300 pl-4 border-l-2 border-zinc-700">
+                   👤 {guestName || localStorage.getItem("kinflix_guest_name") || "Sen"}
+                </div>
+              )}
+            </div>
+          </div>
+          
+          {/* Mesajlaşma Alanı */}
           <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-zinc-950">
             {chatMessages.map(msg => (
               <div key={msg.id} className={`relative group max-w-[85%] rounded-xl p-2.5 text-sm shadow-md ${msg.sender === 'me' ? 'bg-blue-600 text-white self-end rounded-tr-sm' : 'bg-zinc-800 text-zinc-200 self-start rounded-tl-sm'}`}>
@@ -2247,7 +2546,7 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
             className="h-full w-full object-contain cursor-pointer"
           />
 
-{activeSubIndex >= 0 && localSubs[activeSubIndex] && (
+          {activeSubIndex >= 0 && localSubs[activeSubIndex] && (
             <div className={`absolute left-0 right-0 z-[110] flex flex-col items-center justify-end pointer-events-none transition-all duration-300 ${showControls ? 'bottom-32' : 'bottom-12'}`}>
               {localSubs[activeSubIndex].cues
                 .filter(c => currentTime >= c.start && currentTime <= c.end)
@@ -2281,7 +2580,6 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
             </div>
           )}
 
-{/* SIFIRDAN YAZILMIŞ OTOMATİK GEÇİŞ SİSTEMİ */}
           {duration > 0 && duration - currentTime <= 15 && !isRemoteStreaming && !isTV && !selectedMovie.video_path.startsWith("torrent-") && (sameCollectionMovies[0] || recommendedMovies[0]) && (
              <div className="absolute bottom-32 right-10 z-[120] bg-black/80 border border-zinc-700 p-4 rounded-xl shadow-2xl backdrop-blur-md animate-in slide-in-from-right w-80">
                <p className="text-zinc-400 text-[10px] font-bold mb-3 uppercase tracking-widest">Sıradaki Film Başlıyor</p>
@@ -2292,7 +2590,6 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
                  <div className="flex flex-col justify-center w-full">
                    <p className="text-white font-bold text-sm line-clamp-2">{(sameCollectionMovies[0] || recommendedMovies[0]).title}</p>
                    
-                   {/* Geri Sayım Çubuğu */}
                    <div className="w-full h-1 bg-zinc-700 mt-2 rounded overflow-hidden">
                      <div className="h-full bg-red-600 transition-all duration-1000 ease-linear" style={{width: `${((15 - (duration - currentTime)) / 15) * 100}%`}}></div>
                    </div>
@@ -2308,7 +2605,6 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
                      </button>
                    </div>
                    
-                   {/* Süre sıfırlandığında otomatik tetikleyici */}
                    {Math.ceil(duration - currentTime) === 0 && (
                      <img src="" onError={() => closePlayer().then(() => setTimeout(() => startPlayer(sameCollectionMovies[0] || recommendedMovies[0]), 500))} className="hidden" />
                    )}
@@ -2318,7 +2614,7 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
           )}
 
           {currentTime > 10 && currentTime < 120 && !isRemoteStreaming && !isWeb && (
-             <button onClick={(e) => { e.stopPropagation(); handleSeek(currentTime + 85); }} className="absolute bottom-32 right-10 z-50 bg-black/60 border border-zinc-500 text-white font-bold px-6 py-3 rounded hover:bg-white hover:text-black transition-all hover:scale-105 shadow-2xl">
+             <button onClick={(e) => { e.stopPropagation(); handleSeekPlayer(currentTime + 85); }} className="absolute bottom-32 right-10 z-50 bg-black/60 border border-zinc-500 text-white font-bold px-6 py-3 rounded hover:bg-white hover:text-black transition-all hover:scale-105 shadow-2xl">
                İntroyu Atla (85s) ❯
              </button>
           )}
@@ -2338,7 +2634,6 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
               </div>
             )}
 
-{/* Oynatıcı Süre Çubuğu (Tıklanabilir Format Geçişi) */}
             <div className="flex items-center gap-4 mb-4">
               <span 
                 className="text-sm font-medium w-16 text-center drop-shadow-md cursor-pointer hover:text-white transition select-none"
@@ -2352,7 +2647,7 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
                 className="relative w-full h-1.5 bg-zinc-700/80 backdrop-blur rounded-lg cursor-pointer group hover:h-2 transition-all"
                 onMouseMove={handleProgressMouseMove}
                 onMouseLeave={() => setHoverTime(null)}
-                onClick={(e) => { if(isRemoteStreaming) return; const rect = e.currentTarget.getBoundingClientRect(); const x = e.clientX - rect.left; handleSeek((x / rect.width) * duration); }}
+                onClick={(e) => { if(isRemoteStreaming) return; const rect = e.currentTarget.getBoundingClientRect(); const x = e.clientX - rect.left; handleSeekPlayer((x / rect.width) * duration); }}
               >
                 <div className="absolute top-0 left-0 h-full bg-red-600 rounded-lg shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{width: `${(currentTime/duration)*100}%`}}></div>
                 {hoverTime !== null && !isRemoteStreaming && !isTV && (
@@ -2374,10 +2669,10 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
 
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-6">
-                <button onClick={togglePlay} disabled={isRemoteStreaming} className={`text-4xl transition drop-shadow-lg ${isRemoteStreaming ? "opacity-50 cursor-not-allowed" : "hover:scale-110"}`}>{isVideoPlaying ? "⏸" : "▶"}</button>
+                <button onClick={togglePlay} disabled={isRemoteStreaming && connMode === 'webrtc'} className={`text-4xl transition drop-shadow-lg ${isRemoteStreaming && connMode === 'webrtc' ? "opacity-50 cursor-not-allowed" : "hover:scale-110"}`}>{isVideoPlaying ? "⏸" : "▶"}</button>
                 <div className="flex items-center gap-2 group/vol relative drop-shadow-lg">
                   <button onClick={toggleMute} className="text-2xl hover:text-white transition w-8 text-center text-zinc-300">{isMuted || volume === 0 ? "🔇" : volume < 0.5 ? "🔉" : "🔊"}</button>
-                  <input type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume} onChange={handleVolumeChange} className="w-0 opacity-0 group-hover/vol:w-20 group-hover/vol:opacity-100 transition-all duration-300 h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-white" />
+                  <input type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume} onChange={handleVolumeChangePlayer} className="w-0 opacity-0 group-hover/vol:w-20 group-hover/vol:opacity-100 transition-all duration-300 h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-white" />
                 </div>
                 <h2 className="text-xl font-bold truncate max-w-md ml-2 drop-shadow-md">{selectedMovie.title}</h2>
               </div>
@@ -2388,20 +2683,17 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
                   {showSpeedMenu && (
                     <div className="absolute bottom-12 right-0 w-24 bg-zinc-900 border border-zinc-700 rounded-lg overflow-hidden shadow-2xl z-50">
                       {[0.5, 1, 1.25, 1.5, 2].map(rate => (
-                        <button key={rate} disabled={isRemoteStreaming} onClick={() => changePlaybackSpeed(rate)} className={`w-full text-center px-4 py-2 text-sm hover:bg-zinc-800 ${playbackSpeed === rate ? "text-red-500 font-bold" : "text-white"} ${isRemoteStreaming ? "opacity-50 cursor-not-allowed" : ""}`}>{rate}x</button>
+                        <button key={rate} disabled={isRemoteStreaming && connMode === 'webrtc'} onClick={() => changePlaybackSpeed(rate)} className={`w-full text-center px-4 py-2 text-sm hover:bg-zinc-800 ${playbackSpeed === rate ? "text-red-500 font-bold" : "text-white"} ${isRemoteStreaming && connMode === 'webrtc' ? "opacity-50 cursor-not-allowed" : ""}`}>{rate}x</button>
                       ))}
                     </div>
                   )}
                 </div>
 
-{/* YENİ: TV'ye Yansıt Butonu */}
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
                     if(isWeb) { showToast("Web modunda TV'ye yansıtılamaz.", "❌"); return; }
                     showToast("Yerel ağdaki TV'ler taranıyor...", "📺");
-                    // İleride Rust backend'ine eklenecek komut:
-                    // invoke("cast_to_tv", { url: `http://${localIpRef.current}:8765/video?path=${selectedMovie.video_path}` });
                   }} 
                   className="text-2xl text-zinc-300 hover:text-white transition group/cast relative mt-1" 
                   title="Cast to TV"
@@ -2409,6 +2701,17 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
                   <svg stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
                     <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"></path><line x1="2" y1="20" x2="2.01" y2="20"></line>
                   </svg>
+                </button>
+
+                <button 
+                  onClick={toggleVoiceBoost} 
+                  className={`text-xl font-bold transition group relative mt-1 ${isVoiceBoosted ? 'text-blue-500' : 'text-zinc-300 hover:text-white'}`}
+                  title="Ses Güçlendirici (Gece Modu) - Kısayol: B"
+                >
+                  <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 24 24" height="1.2em" width="1.2em" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"></path>
+                  </svg>
+                  {isVoiceBoosted && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span></span>}
                 </button>
 
                 <button onClick={(e) => {e.stopPropagation(); setShowSubMenu(!showSubMenu); setShowSpeedMenu(false);}} className="text-xl font-bold text-zinc-300 hover:text-white">CC</button>
@@ -2463,6 +2766,7 @@ const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
         </div>
       )}
 
+      {/* ANA İÇERİK */}
       {(partyStatus === 'connected' || (!isWeb && !isTV)) && (
         <main className="flex-1 pb-10">
           {error && <div className="mx-10 mb-6 rounded-xl border border-red-900 bg-red-950/30 p-4 text-red-400">Hata: {error}</div>}
