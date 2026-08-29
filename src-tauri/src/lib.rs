@@ -154,6 +154,36 @@ async fn stream_video(Query(params): Query<HashMap<String, String>>, req: Reques
         .unwrap()
 }
 
+// YENİ: Havada (On-the-Fly) H265 -> H264 Çeviri Uç Noktası
+async fn transcode_stream(Query(params): Query<HashMap<String, String>>) -> impl IntoResponse {
+    let path = params.get("path").unwrap_or(&String::new()).to_string();
+    
+    // x265 filmi al, hızlıca x264'e çevir ve pipe üzerinden fragmanlar halinde canlı gönder
+    let mut cmd = TokioCommand::new("ffmpeg")
+        .args(&[
+            "-i", &path,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "28", // Kalite/Hız dengesi
+            "-c:a", "aac",
+            "-movflags", "frag_keyframe+empty_moov",
+            "-f", "mp4",
+            "pipe:1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("FFmpeg başlatılamadı");
+
+    let stream = ReaderStream::new(cmd.stdout.take().unwrap());
+    
+    Response::builder()
+        .header(header::CONTENT_TYPE, "video/mp4")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
 // === 4. ESKİ WEBSOCKET (WEBRTC İLE BİRLİKTE YEDEK OLARAK DURUYOR) ===
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
@@ -214,6 +244,14 @@ fn get_local_subtitles(video_path: String) -> Result<Vec<String>, String> {
 #[tauri::command]
 fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+// YENİ: İnternetten indirilen altyazıyı filmin klasörüne kalıcı olarak kaydeder
+#[tauri::command]
+fn save_subtitle_file(video_path: String, content: String, lang: String) -> Result<(), String> {
+    let path = std::path::Path::new(&video_path);
+    let srt_path = path.with_extension(format!("{}.srt", lang));
+    std::fs::write(srt_path, content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -286,6 +324,7 @@ pub fn run() {
 
                 let app = Router::new()
                     .route("/video", get(stream_video))
+                    .route("/transcode", get(transcode_stream)) // YENİ: Anlık Çeviri Rotası
                     .route("/movies", get(get_catalog))
                     .route("/subtitle", get(serve_subtitle))
                     .route("/ws", get(ws_handler))
@@ -302,6 +341,19 @@ pub fn run() {
 
                 println!("🚀 Kinflix Sunucusu yayında: http://0.0.0.0:8765");
 
+                // UDP Broadcast (Auto-Discovery) Sinyali Yayici
+                tokio::spawn(async {
+                    if let Ok(socket) = tokio::net::UdpSocket::bind("0.0.0.0:0").await {
+                        socket.set_broadcast(true).unwrap();
+                        let msg = b"KINFLIX_SERVER_HERE";
+                        loop {
+                            // Ağdaki tüm cihazların 8766 portuna "Buradayım" diye bağırır
+                            let _ = socket.send_to(msg, "255.255.255.255:8766").await;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                        }
+                    }
+                });
+
                 let _ = axum::serve(listener, app).await;
             });
 
@@ -311,10 +363,36 @@ pub fn run() {
             scan_movies,
             get_local_subtitles,
             read_text_file,
+            save_subtitle_file, // YENİ: Altyazı kaydetme fonksiyonu Tauri'ye tanıtıldı
             convert_to_x264,
             get_local_ip,
-            start_tunnel
+            start_tunnel,
+            download_offline_poster
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+use std::io::Write;
+
+#[tauri::command]
+async fn download_offline_poster(video_path: String, poster_url: String) -> Result<String, String> {
+    let path = std::path::Path::new(&video_path);
+    let dir = path.parent().ok_or("Klasör bulunamadı")?;
+    let poster_path = dir.join("poster.jpg");
+
+    // Eğer zaten inmişse tekrar indirme
+    if poster_path.exists() {
+        return Ok(poster_path.to_string_lossy().to_string());
+    }
+
+    // URL'den resmi indir
+    let response = reqwest::get(&poster_url).await.map_err(|e| e.to_string())?;
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+
+    // Filmin yanına kaydet
+    let mut file = std::fs::File::create(&poster_path).map_err(|e| e.to_string())?;
+    file.write_all(&bytes).map_err(|e| e.to_string())?;
+
+    Ok(poster_path.to_string_lossy().to_string())
 }

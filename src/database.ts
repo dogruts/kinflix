@@ -3,19 +3,19 @@ import Database from "@tauri-apps/plugin-sql";
 
 let db: Database | null = null;
 
-// Tarayıcı mı yoksa Masaüstü mü kontrolü
 const isWeb = typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window) && !('__TAURI_IPC__' in window) && !('__TAURI__' in window);
 
 export async function getDatabase() {
-  if (isWeb) return null; // Web'de veritabanı yok
+  if (isWeb) return null; 
   if (!db) db = await Database.load("sqlite:myflix_v3.db");
   return db;
 }
 
 export async function initializeDatabase() {
   const database = await getDatabase();
-  if (!database) return; // WEB KORUMASI: Veritabanı yoksa pas geç
+  if (!database) return;
 
+  // Ana Film Tablosu (Kişisel veriler çıkartıldı)
   await database.execute(`
     CREATE TABLE IF NOT EXISTS movies (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,20 +33,24 @@ export async function initializeDatabase() {
       director TEXT,
       actors TEXT,
       collection_name TEXT,
-      is_watched INTEGER DEFAULT 0,
-      watch_count INTEGER DEFAULT 0,
-      progress INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `);
   
-  try { await database.execute(`ALTER TABLE movies ADD COLUMN watchlist INTEGER DEFAULT 0`); } catch (e) {}
-  try { await database.execute(`ALTER TABLE movies ADD COLUMN director TEXT`); } catch (e) {}
-  try { await database.execute(`ALTER TABLE movies ADD COLUMN actors TEXT`); } catch (e) {}
-  try { await database.execute(`ALTER TABLE movies ADD COLUMN collection_name TEXT`); } catch (e) {}
-  try { await database.execute(`ALTER TABLE movies ADD COLUMN is_watched INTEGER DEFAULT 0`); } catch (e) {}
-  try { await database.execute(`ALTER TABLE movies ADD COLUMN watch_count INTEGER DEFAULT 0`); } catch (e) {}
+  // YENİ: Profile Özel İstatistik Tablosu
+  await database.execute(`
+    CREATE TABLE IF NOT EXISTS user_movie_stats (
+      user_id TEXT NOT NULL,
+      video_path TEXT NOT NULL,
+      progress INTEGER DEFAULT 0,
+      is_watched INTEGER DEFAULT 0,
+      watch_count INTEGER DEFAULT 0,
+      watchlist INTEGER DEFAULT 0,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, video_path)
+    )
+  `);
 
   await database.execute(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -84,8 +88,8 @@ export async function saveMovie(movie: Movie) {
   if (!database) return;
 
   await database.execute(
-    `INSERT INTO movies (title, year, folder_path, video_path, poster_url, backdrop_url, tmdb_id, rating, overview, runtime, genres, director, actors, collection_name, is_watched, watch_count, progress, watchlist)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+    `INSERT INTO movies (title, year, folder_path, video_path, poster_url, backdrop_url, tmdb_id, rating, overview, runtime, genres, director, actors, collection_name)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      ON CONFLICT(video_path) DO UPDATE SET
        title = excluded.title, year = excluded.year, folder_path = excluded.folder_path,
        poster_url = COALESCE(excluded.poster_url, movies.poster_url),
@@ -97,11 +101,8 @@ export async function saveMovie(movie: Movie) {
        genres = COALESCE(excluded.genres, movies.genres),
        director = COALESCE(excluded.director, movies.director),
        actors = COALESCE(excluded.actors, movies.actors),
-       collection_name = COALESCE(excluded.collection_name, movies.collection_name),
-       is_watched = COALESCE(excluded.is_watched, movies.is_watched),
-       watch_count = COALESCE(excluded.watch_count, movies.watch_count),
-       watchlist = COALESCE(excluded.watchlist, movies.watchlist)`,
-    [movie.title, movie.year, movie.folder_path, movie.video_path, movie.poster_url ?? null, movie.backdrop_url ?? null, movie.tmdb_id ?? null, movie.rating ?? null, movie.overview ?? null, movie.runtime ?? null, movie.genres ?? null, movie.director ?? null, movie.actors ?? null, movie.collection_name ?? null, movie.is_watched ?? 0, movie.watch_count ?? 0, movie.progress ?? 0, movie.watchlist ?? 0]
+       collection_name = COALESCE(excluded.collection_name, movies.collection_name)`,
+    [movie.title, movie.year, movie.folder_path, movie.video_path, movie.poster_url ?? null, movie.backdrop_url ?? null, movie.tmdb_id ?? null, movie.rating ?? null, movie.overview ?? null, movie.runtime ?? null, movie.genres ?? null, movie.director ?? null, movie.actors ?? null, movie.collection_name ?? null]
   );
 }
 
@@ -115,22 +116,49 @@ export async function updateMovieMetadata(videoPath: string, metadata: any) {
   );
 }
 
-export async function updateMovieProgress(videoPath: string, progress: number, isWatched: number, watchCount: number) {
+// YENİ: İlerlemeyi (Progress) sadece o anki aktif profile kaydeder
+export async function updateMovieProgress(userId: string, videoPath: string, progress: number, isWatched: number, watchCount: number) {
   const database = await getDatabase();
   if (!database) return;
-  await database.execute(`UPDATE movies SET progress = $1, is_watched = $2, watch_count = $3, updated_at = CURRENT_TIMESTAMP WHERE video_path = $4`, [progress, isWatched, watchCount, videoPath]);
+  await database.execute(`
+    INSERT INTO user_movie_stats (user_id, video_path, progress, is_watched, watch_count, updated_at)
+    VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, video_path) DO UPDATE SET
+      progress = excluded.progress,
+      is_watched = excluded.is_watched,
+      watch_count = excluded.watch_count,
+      updated_at = CURRENT_TIMESTAMP
+  `, [userId, videoPath, progress, isWatched, watchCount]);
 }
 
-export async function setWatchlist(videoPath: string, status: number) {
+// YENİ: Watchlist'i sadece o anki aktif profile kaydeder
+export async function setWatchlist(userId: string, videoPath: string, status: number) {
   const database = await getDatabase();
   if (!database) return;
-  await database.execute(`UPDATE movies SET watchlist = $1, updated_at = CURRENT_TIMESTAMP WHERE video_path = $2`, [status, videoPath]);
+  await database.execute(`
+    INSERT INTO user_movie_stats (user_id, video_path, watchlist, updated_at)
+    VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, video_path) DO UPDATE SET
+      watchlist = excluded.watchlist,
+      updated_at = CURRENT_TIMESTAMP
+  `, [userId, videoPath, status]);
 }
 
-export async function getMovies(): Promise<Movie[]> {
+// YENİ: Filmleri çekerken ana tablo ile profilin özel tablosunu birleştirir (LEFT JOIN)
+export async function getMovies(userId: string = "default"): Promise<Movie[]> {
   const database = await getDatabase();
-  if (!database) return []; // Web'de boş film listesi dön
-  return await database.select<Movie[]>(`SELECT * FROM movies ORDER BY title COLLATE NOCASE`);
+  if (!database) return []; 
+  return await database.select<Movie[]>(`
+    SELECT m.*, 
+           COALESCE(u.progress, 0) as progress,
+           COALESCE(u.is_watched, 0) as is_watched,
+           COALESCE(u.watch_count, 0) as watch_count,
+           COALESCE(u.watchlist, 0) as watchlist,
+           COALESCE(u.updated_at, m.updated_at) as updated_at
+    FROM movies m
+    LEFT JOIN user_movie_stats u ON m.video_path = u.video_path AND u.user_id = $1
+    ORDER BY m.title COLLATE NOCASE
+  `, [userId]);
 }
 
 export async function getSetting(key: string): Promise<string | null> {
@@ -156,10 +184,12 @@ export async function removeMovie(videoPath: string) {
   const database = await getDatabase();
   if (!database) return;
   await database.execute(`DELETE FROM movies WHERE video_path = $1`, [videoPath]);
+  await database.execute(`DELETE FROM user_movie_stats WHERE video_path = $1`, [videoPath]);
 }
 
 export async function clearDatabase() {
   const database = await getDatabase();
   if (!database) return;
   await database.execute(`DELETE FROM movies`);
+  await database.execute(`DELETE FROM user_movie_stats`);
 }

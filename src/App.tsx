@@ -1,6 +1,8 @@
 // src/App.tsx
 import { useEffect, useState, useMemo, useRef } from "react";
 import Peer, { DataConnection, MediaConnection } from "peerjs";
+// @ts-ignore
+import WebTorrent from 'webtorrent/dist/webtorrent.min.js';
 
 const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI_IPC__' in window || '__TAURI__' in window);
 const isTV = typeof navigator !== 'undefined' && /(Web0S|NetCast|SmartTV|Tizen)/i.test(navigator.userAgent);
@@ -19,7 +21,6 @@ const MovieCardFallback = ({ movie }: { movie: Movie }) => (
     ) : (
       <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800 p-3 text-center">
         <span className="text-4xl mb-3 opacity-50">🎬</span>
-        {/* YENİ: Afiş Yok yerine filmin adını gösteriyoruz */}
         <span className="text-zinc-300 text-sm font-bold tracking-wider leading-snug px-1 line-clamp-3">
           {movie.title}
         </span>
@@ -27,14 +28,14 @@ const MovieCardFallback = ({ movie }: { movie: Movie }) => (
     )}
     <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-3">
       <h3 className="text-white font-bold text-sm line-clamp-2 leading-tight mb-1">{movie.title}</h3>
-      {movie.year && <span className="text-zinc-400 text-xs font-semibold">{movie.year}</span>}
-      {movie.progress && movie.progress > 5 && (movie.is_watched || 0) === 0 && (
+      {movie.year ? <span className="text-zinc-400 text-xs font-semibold">{movie.year}</span> : null}
+      {/* YENİ: movie.progress için güvenlik kontrolü (undefined hatasını önler) */}
+      {(movie.progress || 0) > 5 && (movie.is_watched || 0) === 0 && (
         <div className="w-full h-1 bg-zinc-700 rounded-full mt-2 overflow-hidden">
-          <div className="h-full bg-red-600" style={{ width: `${Math.min((movie.progress / ((movie.runtime || 120) * 60)) * 100, 100)}%` }}></div>
+          <div className="h-full bg-red-600" style={{ width: `${Math.min(((movie.progress || 0) / ((movie.runtime || 120) * 60)) * 100, 100)}%` }}></div>
         </div>
       )}
     </div>
-    {/* YENİ: 0 yazma sorunu bitti, Netflix % stili yerine gerçek IMDB puanı */}
     {movie.rating != null && movie.rating > 0 && (
       <div className="absolute top-2 right-2 bg-black/80 text-yellow-500 text-[11px] font-bold px-1.5 py-0.5 rounded border border-yellow-900/50 backdrop-blur shadow-xl z-10 flex items-center gap-1">
         ⭐ {movie.rating.toFixed(1)}
@@ -43,6 +44,35 @@ const MovieCardFallback = ({ movie }: { movie: Movie }) => (
   </div>
 );
 
+const HeroBanner = ({ movies, onPlay, onInfo, t }: { movies: Movie[], onPlay: (m: Movie) => void, onInfo: (m: Movie) => void, t: any }) => {
+  const heroMovies = useMemo(() => shuffleArray(movies.filter((m: Movie) => m.backdrop_url)).slice(0, 10), [movies]);
+  const [heroIndex, setHeroIndex] = useState(0);
+
+  useEffect(() => {
+    if (heroMovies.length <= 1) return;
+    const interval = setInterval(() => setHeroIndex(prev => (prev + 1) % heroMovies.length), 8000);
+    return () => clearInterval(interval);
+  }, [heroMovies]);
+
+  const heroMovie = heroMovies[heroIndex] || movies[0];
+  if (!heroMovie) return null;
+
+  return (
+    <div className="relative -mt-24 mb-10 h-[70vh] w-full transition-all duration-1000 ease-in-out">
+      {heroMovie.backdrop_url ? <img src={heroMovie.backdrop_url} key={heroMovie.video_path} className="h-full w-full object-cover opacity-80 animate-in fade-in duration-1000" /> : <div className="h-full w-full bg-zinc-900" />}
+      <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0b] via-[#0b0b0b]/20 to-[#0b0b0b]/40" />
+      <div className="absolute bottom-20 left-10 z-10 max-w-2xl drop-shadow-2xl">
+        <h1 className="text-6xl font-extrabold md:text-7xl">{heroMovie.title}</h1>
+        <p className="mt-4 line-clamp-3 text-lg font-medium text-zinc-300">{heroMovie.overview}</p>
+        <div className="mt-6 flex gap-4">
+          <button onClick={() => onPlay(heroMovie)} className="flex items-center gap-2 rounded bg-white px-8 py-3 text-xl font-bold text-black transition hover:bg-zinc-200"><span className="text-2xl">▶</span> {(heroMovie.progress || 0) > 0 ? t.resume : t.play}</button>
+          <button onClick={() => onInfo(heroMovie)} className="flex items-center gap-2 rounded bg-zinc-500/50 px-8 py-3 text-xl font-bold text-white backdrop-blur transition hover:bg-zinc-500/70">{t.info}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const dict = {
   tr: {
     home: "Ana Sayfa", library: "Tüm Filmler", collections: "Koleksiyonlar", watchlistTab: "İzlenecekler", sync: "TMDB Güncelle", addLib: "+ Kütüphane Ekle",
@@ -50,7 +80,7 @@ const dict = {
     emptyLib: "Kütüphanen Bomboş", clickToStart: "Başlamak İçin Tıkla", emptyWatchlist: "İzlenecekler listeniz şu an boş.",
     continue: "Kaldığın Yerden Devam Et", newReleases: "Yeni Çıkanlar", topRated: "En Yüksek Puanlılar",
     watchlist: "İzlenecekler Listem", toWatch: "Sonra İzle", inWatchlist: "Listede",
-    search: "Film Ara...", allGenres: "Tüm Türler", sort: "Sırala",
+    search: "Film, Oyuncu, Yönetmen Ara...", allGenres: "Tüm Türler", sort: "Sırala",
     sortAZ: "A - Z", sortNew: "En Yeni Yıl", sortRating: "En Yüksek Puan",
     play: "Oynat", resume: "Devam Et", info: "ⓘ Daha Fazla Bilgi", similar: "Benzer Filmler",
     noOverview: "Bu film için herhangi bir özet bulunamadı.",
@@ -66,7 +96,7 @@ const dict = {
     emptyLib: "Your Library is Empty", clickToStart: "Click to Start", emptyWatchlist: "Your watchlist is empty.",
     continue: "Continue Watching", newReleases: "New Releases", topRated: "Top Rated",
     watchlist: "My Watchlist", toWatch: "Watch Later", inWatchlist: "In Watchlist",
-    search: "Search Movies...", allGenres: "All Genres", sort: "Sort By",
+    search: "Search Movies, Actors, Directors...", allGenres: "All Genres", sort: "Sort By",
     sortAZ: "A - Z", sortNew: "Newest", sortRating: "Highest Rated",
     play: "Play", resume: "Resume", info: "ⓘ More Info", similar: "Similar Movies",
     noOverview: "No overview found for this movie.",
@@ -79,7 +109,7 @@ const dict = {
 };
 
 type SortOption = "title_asc" | "year_desc" | "rating_desc";
-type TabState = "home" | "library" | "collections" | "watchlist";
+type TabState = "home" | "library" | "collections" | "watchlist" | "yts" | "foryou";
 type Lang = "tr" | "en";
 type ParsedCue = { start: number; end: number; text: string };
 type SubtitleTrack = { id: string; url: string; label: string; srtContent: string; offset: number; cues: ParsedCue[] };
@@ -87,7 +117,7 @@ type SubtitleTrack = { id: string; url: string; label: string; srtContent: strin
 type ChatMessage = { 
   id: string; 
   sender: "me" | "peer"; 
-  author?: string; // YENİ
+  author?: string; 
   type: "text" | "image"; 
   content: string; 
   timestamp: number;
@@ -226,16 +256,70 @@ function App() {
   const [isConverting, setIsConverting] = useState(false);
 
   const [toast, setToast] = useState<{text: string, icon: string} | null>(null);
+  const [showIntro, setShowIntro] = useState(true);
   const toastTimer = useRef<number | null>(null);
 
   const [guestName, setGuestName] = useState<string>(localStorage.getItem("kinflix_guest_name") || "");
   const [showNameModal, setShowNameModal] = useState(false);
+
+  // YTS ve Profil Stateleri
+  const [ytsMovies, setYtsMovies] = useState<any[]>([]);
+  const [isFetchingYts, setIsFetchingYts] = useState(false);
+  
+  const torrentClient = useRef<any>(null);
+
+  useEffect(() => {
+    torrentClient.current = new WebTorrent();
+    return () => {
+      if (torrentClient.current) torrentClient.current.destroy();
+    };
+  }, []);
+
+  const [profiles, setProfiles] = useState<{id: string, name: string, color: string, avatar: string}[]>(
+    JSON.parse(localStorage.getItem("kinflix_profiles") || '[{"id":"1","name":"tekin","color":"bg-blue-600","avatar":"🥷"}]')
+  );
+  const [activeProfile, setActiveProfile] = useState<string>(localStorage.getItem("kinflix_profile") || "");
+  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
+  const [newProfileName, setNewProfileName] = useState("");
+
+  const handleSelectProfile = (id: string) => {
+    setActiveProfile(id);
+    localStorage.setItem("kinflix_profile", id);
+  };
+
+  const handleAddProfile = () => {
+    if (!newProfileName.trim()) return;
+    const colors = ["bg-red-600", "bg-green-600", "bg-purple-600", "bg-yellow-600"];
+    const avatars = ["👩‍🚀", "🧙‍♂️", "🧛‍♀️", "🤖"];
+    const randomColor = colors[profiles.length % colors.length];
+    const randomAvatar = avatars[profiles.length % avatars.length];
+    
+    const newProfiles = [...profiles, { id: Date.now().toString(), name: newProfileName, color: randomColor, avatar: randomAvatar }];
+    setProfiles(newProfiles);
+    localStorage.setItem("kinflix_profiles", JSON.stringify(newProfiles));
+    setIsCreatingProfile(false);
+    setNewProfileName("");
+  };
+  
+  const [likedMovies, setLikedMovies] = useState<Record<string, number>>(JSON.parse(localStorage.getItem("kinflix_likes") || "{}"));
+
+  const handleLike = (path: string, val: number) => {
+    const newLikes = { ...likedMovies, [path]: val };
+    setLikedMovies(newLikes);
+    localStorage.setItem("kinflix_likes", JSON.stringify(newLikes));
+    showToast(val === 1 ? "Film türleri favorilerine eklendi 👍" : "Bu tarz filmler daha az önerilecek 👎", "🎯");
+  };
   
   const showToast = (text: string, icon: string = "🔔") => {
     setToast({text, icon});
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 3000);
   };
+
+  useEffect(() => {
+    const timer = setTimeout(() => setShowIntro(false), 2500);
+    return () => clearTimeout(timer);
+  }, []);
 
   const isHostRef = useRef(!isWeb);
   const partyStatusRef = useRef<"disconnected" | "connecting" | "connected">("disconnected");
@@ -299,7 +383,7 @@ function App() {
       .map(([name, items]) => ({ name, movies: items.sort((a,b) => (a.year||0) - (b.year||0)) }));
   }, [movies]);
 
-  const continueWatching = useMemo(() => movies.filter(m => m.progress && m.progress > 5 && (m.is_watched || 0) === 0).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")), [movies]);
+  const continueWatching = useMemo(() => movies.filter(m => (m.progress || 0) > 5 && (m.is_watched || 0) === 0).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")), [movies]);
   const watchListMovies = useMemo(() => movies.filter(m => m.watchlist === 1).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")), [movies]);
   
   const topRated = useMemo(() => {
@@ -328,6 +412,11 @@ function App() {
       m.genres.split(", ").some(g => selectedMovie.genres?.includes(g))
     ).sort(() => 0.5 - Math.random()).slice(0, 15);
   }, [selectedMovie, movies]);
+  
+  const sameCollectionMovies = useMemo(() => {
+    if (!selectedMovie || !selectedMovie.collection_name) return [];
+    return movies.filter(m => m.collection_name === selectedMovie.collection_name && m.video_path !== selectedMovie.video_path);
+  }, [selectedMovie, movies]);
 
   const userStats = useMemo(() => {
     const watched = movies.filter(m => m.is_watched === 1);
@@ -341,16 +430,58 @@ function App() {
     return { total: movies.length, watchedCount: watched.length, hours, favGenre };
   }, [movies]);
 
-  const heroMovies = useMemo(() => shuffleArray(movies.filter(m => m.backdrop_url)).slice(0, 10), [movies]);
-  const [heroIndex, setHeroIndex] = useState(0);
+  // YENİ: libraryMovies, recommendedMovies, YTS Effect DOĞRU YERDE!
+  const libraryMovies = useMemo(() => {
+    let filtered = movies.filter(movie => {
+      const q = searchQuery.toLowerCase();
+      return (movie.title && movie.title.toLowerCase().includes(q)) ||
+             (movie.director && movie.director.toLowerCase().includes(q)) ||
+             (movie.actors && movie.actors.toLowerCase().includes(q));
+    });
+    if (selectedGenre !== "All") filtered = filtered.filter(movie => movie.genres?.includes(selectedGenre));
+    filtered.sort((a, b) => {
+      if (sortBy === "title_asc") return a.title.localeCompare(b.title);
+      else if (sortBy === "year_desc") return (b.year || 0) - (a.year || 0);
+      else if (sortBy === "rating_desc") return (b.rating || 0) - (a.rating || 0);
+      return 0;
+    });
+    return filtered;
+  }, [movies, searchQuery, sortBy, selectedGenre]);
+
+  const recommendedMovies = useMemo(() => {
+    const likedPaths = Object.keys(likedMovies).filter(k => likedMovies[k] === 1);
+    const dislikedPaths = Object.keys(likedMovies).filter(k => likedMovies[k] === -1);
+    const genreWeights: Record<string, number> = {};
+    
+    movies.forEach(m => {
+      if (likedPaths.includes(m.video_path) && m.genres) {
+        m.genres.split(", ").forEach(g => { genreWeights[g] = (genreWeights[g] || 0) + 1; });
+      }
+    });
+
+    const recommendations = movies
+      .filter(m => !likedPaths.includes(m.video_path) && !dislikedPaths.includes(m.video_path))
+      .map(m => {
+        let score = 0;
+        if (m.genres) m.genres.split(", ").forEach(g => { score += (genreWeights[g] || 0); });
+        return { ...m, matchScore: score };
+      })
+      .filter(m => m.matchScore > 0)
+      .sort((a, b) => b.matchScore - a.matchScore)
+      .slice(0, 15);
+      
+    return recommendations.length > 0 ? recommendations : topRated;
+  }, [movies, likedMovies, topRated]);
 
   useEffect(() => {
-    if (heroMovies.length <= 1 || activeTab !== "home" || isPlaying || selectedMovie) return;
-    const interval = setInterval(() => { setHeroIndex(prev => (prev + 1) % heroMovies.length); }, 8000);
-    return () => clearInterval(interval);
-  }, [heroMovies, activeTab, isPlaying, selectedMovie]);
-
-  const heroMovie = heroMovies[heroIndex] || movies[0];
+    if (activeTab === "yts" && ytsMovies.length === 0) {
+      setIsFetchingYts(true);
+      fetch("https://yts.mx/api/v2/list_movies.json?limit=24&sort_by=like_count")
+        .then(res => res.json())
+        .then(data => { if (data?.data?.movies) setYtsMovies(data.data.movies); })
+        .finally(() => setIsFetchingYts(false));
+    }
+  }, [activeTab, ytsMovies.length]);
 
   useEffect(() => {
     const handleTvRemote = (e: KeyboardEvent) => {
@@ -391,7 +522,7 @@ function App() {
              invoke<string>("get_local_ip").then(ip => setLocalIp(ip)).catch(() => setLocalIp("Bilinmiyor"));
           });
 
-          const storedMovies = await getMovies();
+          const storedMovies = await getMovies(activeProfile || "default");
           setMovies(storedMovies);
           initPeerHost();
         } catch (error) { setError(String(error)); }
@@ -421,6 +552,12 @@ function App() {
     }
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (!isWeb && activeProfile) {
+      getMovies(activeProfile).then(setMovies);
+    }
+  }, [activeProfile]);
 
   useEffect(() => {
     isChatOpenRef.current = isChatOpen;
@@ -510,12 +647,12 @@ function App() {
       
       const scannedPaths = result.map(m => m.video_path);
       const normalizedInput = normalizePath(path);
-      const dbMoviesInFolder = (await getMovies()).filter(m => normalizePath(m.folder_path) === normalizedInput);
+      const dbMoviesInFolder = (await getMovies(activeProfile || "default")).filter(m => normalizePath(m.folder_path) === normalizedInput);
       
       for (const dbMovie of dbMoviesInFolder) {
         if (!scannedPaths.includes(dbMovie.video_path)) await removeMovie(dbMovie.video_path);
       }
-      setMovies(await getMovies());
+      setMovies(await getMovies(activeProfile || "default"));
     } catch (error) { setError(String(error)); } finally { setScanning(false); }
   }
 
@@ -524,7 +661,7 @@ function App() {
     if (!tmdbToken) { setIsSettingsOpen(true); return; }
     setSyncing(true); setError(null);
     try {
-      const storedMovies = await getMovies();
+      const storedMovies = await getMovies(activeProfile || "default");
       let successCount = 0;
       let failCount = 0;
       const batchSize = 5;
@@ -533,7 +670,13 @@ function App() {
         const batch = storedMovies.slice(i, i + batchSize);
         await Promise.all(batch.map(async (movie) => {
           try {
-            const metadata = await getMovieMetadata(movie.title, movie.year, tmdbToken, lang);
+            let cleanTitle = movie.title
+              .replace(/\b(1080p|720p|480p|2160p|4k|bluray|x264|x265|hevc|dual|remux|webrip|hdrip|hdtv|yify|yts|aac|dd5|xvid)\b.*/i, '')
+              .replace(/(\[.*?\]|\(.*?\))/g, '')
+              .replace(/[-_.]/g, ' ')
+              .trim();
+            
+            const metadata = await getMovieMetadata(cleanTitle, movie.year, tmdbToken, lang);
             if (metadata) {
               await updateMovieMetadata(movie.video_path, metadata);
               successCount++;
@@ -549,7 +692,7 @@ function App() {
           await new Promise(r => setTimeout(r, 400));
         }
       }
-      setMovies(await getMovies());
+      setMovies(await getMovies(activeProfile || "default"));
       alert(`✅ TMDB Eşitleme Tamamlandı!\n\n✔ Başarılı: ${successCount}\n❌ Başarısız/Bulunamadı: ${failCount}`);
     } catch (error) { setError(String(error)); } finally { setSyncing(false); }
   }
@@ -557,7 +700,7 @@ function App() {
   const toggleWatchlist = async (movie: Movie) => {
     if (isWeb) return;
     const newStatus = movie.watchlist ? 0 : 1;
-    await setWatchlist(movie.video_path, newStatus);
+    await setWatchlist(activeProfile || "default", movie.video_path, newStatus);
     setMovies(prev => prev.map(m => m.video_path === movie.video_path ? { ...m, watchlist: newStatus } : m));
     setSelectedMovie(prev => prev ? { ...prev, watchlist: newStatus } : null);
   };
@@ -606,7 +749,7 @@ function App() {
     setIsSearchingOS(true);
     setOsError(null);
     try {
-      let cleanQuery = selectedMovie.title.replace(/[\._]/g, ' ').replace(/\b(1080p|720p|480p|2160p|4k|bluray|x264|x265|dual|remux|webrip|hdrip|hdtv|yify|yts)\b.*/i, '').replace(/(\[.*?\]|\(.*?\))/g, '').trim();
+      let cleanQuery = selectedMovie.title.replace(/\b(1080p|720p|480p|2160p|4k|bluray|x264|x265|hevc|dual|remux|webrip|hdrip|hdtv|yify|yts)\b.*/i, '').replace(/(\[.*?\]|\(.*?\))/g, '').replace(/[-_.]/g, ' ').trim();
       const metaUrl = `https://v3-cinemeta.strem.io/catalog/movie/top/search=${encodeURIComponent(cleanQuery)}.json`;
       const metaRes = await fetch(metaUrl);
       if(!metaRes.ok) throw new Error("Cinemeta çöktü");
@@ -639,6 +782,19 @@ function App() {
       const res = await fetch(sub.url);
       const content = await res.text();
       const cues = parseSrtToCues(content, 0); 
+      
+      if (!isWeb && !selectedMovie?.video_path.startsWith("torrent-")) {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("save_subtitle_file", { 
+            videoPath: selectedMovie!.video_path, 
+            content: content, 
+            lang: sub.lang 
+          });
+          showToast("Altyazı filme kaydedildi!", "💾");
+        } catch(e) { console.error("Kayıt hatası", e); }
+      }
+
       setLocalSubs(prev => {
         const newSubs = [...prev, { id: `stremio_${sub.id}`, url: "", label: `🌐 ${sub.lang.toUpperCase()} - Stremio`, srtContent: content, offset: 0, cues }];
         setActiveSubIndex(newSubs.length - 1);
@@ -660,7 +816,7 @@ function App() {
   const handleSendChatText = () => {
     if (!chatInput.trim()) return;
     const authorName = guestName || (isHost ? "Host" : "Misafir");
-const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: authorName, type: "text", content: chatInput, timestamp: Date.now() };
+    const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: authorName, type: "text", content: chatInput, timestamp: Date.now() };
     saveChatMessage(msg);
     broadcastEvent("chat_msg", { msg });
     setChatInput("");
@@ -737,8 +893,6 @@ const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: auth
         broadcastEvent("catalog", { catalog: moviesRef.current });
         
         if (selectedMovieRef.current) {
-           console.log("Yeni misafir geldi, oynatılan filme eşitleniyor...");
-           
            broadcastEvent("load", { movie: selectedMovieRef.current });
            
            if (localSubsRef.current.length > 0) {
@@ -884,9 +1038,10 @@ const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: auth
         setPartyStatus("connected"); partyStatusRef.current = "connected";
         setIsHost(false); isHostRef.current = false;
         setIsPartyMenuOpen(false); 
+
         if (!localStorage.getItem("kinflix_guest_name")) {
-    setShowNameModal(true);
-  }
+          setShowNameModal(true);
+        }
         
         setTimeout(() => {
           if (connRef.current?.open) {
@@ -926,10 +1081,11 @@ const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: auth
     ws.onopen = () => { 
       setPartyStatus("connected"); partyStatusRef.current = "connected";
       setTargetAddress(address); 
-      setIsPartyMenuOpen(false);
-      if (!localStorage.getItem("kinflix_guest_name")) {
-    setShowNameModal(true);
-  } 
+      setIsPartyMenuOpen(false); 
+
+      if (!hostStatus && !localStorage.getItem("kinflix_guest_name")) {
+        setShowNameModal(true);
+      }
       
       setTimeout(() => {
         if (!hostStatus && wsRef.current?.readyState === WebSocket.OPEN) {
@@ -1052,11 +1208,14 @@ const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: auth
   }, []);
 
   const getSafeVideoSource = () => {
-    if (!selectedMovie) return ""; 
+    if (!selectedMovie || selectedMovie.video_path.startsWith("torrent-")) return ""; 
+    const isHevc = /265|hevc/i.test(selectedMovie.video_path);
     
     if (isRemoteStreaming && connModeRef.current === 'ip') {
       const baseUrl = targetAddressRef.current.startsWith("http") ? targetAddressRef.current : `http://${targetAddressRef.current}:8765`;
-      return `${baseUrl}/video?path=${encodeURIComponent(selectedMovie.video_path)}&quality=720p`;
+      return isHevc 
+        ? `${baseUrl}/transcode?path=${encodeURIComponent(selectedMovie.video_path)}`
+        : `${baseUrl}/video?path=${encodeURIComponent(selectedMovie.video_path)}&quality=720p`;
     }
     
     if (isRemoteStreaming && connModeRef.current === 'webrtc') return "";
@@ -1081,6 +1240,45 @@ const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: auth
     }
   }, [remoteStream, isRemoteStreaming, selectedMovie]);
 
+  const streamYtsMovie = (ytsMovie: any) => {
+    if (!ytsMovie.torrents || ytsMovie.torrents.length === 0) {
+      showToast("Bu film için uygun kaynak bulunamadı.", "❌");
+      return;
+    }
+  
+    const bestTorrent = ytsMovie.torrents.find((t: any) => t.quality === "1080p") || ytsMovie.torrents[0];
+    const magnetURI = `magnet:?xt=urn:btih:${bestTorrent.hash}&dn=${encodeURIComponent(ytsMovie.title)}&tr=udp://open.demonii.com:1337/announce&tr=udp://tracker.openbittorrent.com:80`;
+  
+    showToast("Korsan ağa bağlanılıyor, eşler aranıyor...", "🏴‍☠️");
+  
+    const fakeMovie: Movie = {
+      video_path: `torrent-${ytsMovie.id}`,
+      title: ytsMovie.title,
+      year: ytsMovie.year,
+      folder_path: "YTS",
+      poster_url: ytsMovie.large_cover_image,
+      backdrop_url: ytsMovie.background_image,
+      overview: ytsMovie.summary,
+      rating: ytsMovie.rating,
+      genres: ytsMovie.genres?.join(", "),
+      runtime: ytsMovie.runtime
+    };
+  
+    setSelectedMovie(fakeMovie);
+    setIsPlaying(true);
+    setIsVideoPlaying(true);
+  
+    if (torrentClient.current) {
+      torrentClient.current.add(magnetURI, (torrent: any) => {
+        showToast("Bağlantı kuruldu, video yükleniyor...", "⚡");
+        const file = torrent.files.find((f: any) => f.name.endsWith('.mp4'));
+        if (file && videoRef.current) {
+          file.renderTo(videoRef.current);
+        }
+      });
+    }
+  };
+
   const startPlayer = async (movieOverride?: Movie) => {
     const movieToPlay = movieOverride || selectedMovie;
     if (!movieToPlay) return;
@@ -1090,7 +1288,7 @@ const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: auth
       broadcastEvent("load", { movie: movieToPlay }); 
     }
 
-    if (!isWeb) {
+    if (!isWeb && !movieToPlay.video_path.startsWith("torrent-")) {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
         const srtFiles = await invoke<string[]>("get_local_subtitles", { video_path: movieToPlay.video_path });
@@ -1111,27 +1309,27 @@ const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: auth
     
     setOsResults([]); setOsError(null); setSelectedMovie(movieToPlay); setIsPlaying(true); setIsVideoPlaying(true); setPlaybackSpeed(1);
     
-if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.current === 'connected') {
+    if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.current === 'connected' && !movieToPlay.video_path.startsWith("torrent-")) {
       const handlePlaying = async () => {
         if (connRef.current && videoRef.current && peerRef.current) {
            if (callRef.current) { callRef.current.close(); }
            
-           // YENİ: Sadece dosya yolunda 265 veya hevc geçiyorsa akıllı ekran paylaşımını tetikle
            const isHevcFile = /265|hevc/i.test(movieToPlay.video_path);
-
            if (isHevcFile) {
-             try {
-               const stream = await navigator.mediaDevices.getDisplayMedia({
-                 video: { displaySurface: "browser" },
-                 audio: { suppressLocalAudioPlayback: false }
-               } as any);
-               callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
-             } catch (err) {
+             const useScreenShare = window.confirm("Bu film H265 (HEVC) formatında!\n\nTAMAM: Ekranı Paylaş (Siyah ekran sorununu çözer)\nİPTAL: Normal devam et");
+             if (useScreenShare) {
+               try {
+                 const stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: "browser" }, audio: { suppressLocalAudioPlayback: false } } as any);
+                 callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
+               } catch (err) {
+                 const stream = (videoRef.current as any).captureStream();
+                 callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
+               }
+             } else {
                const stream = (videoRef.current as any).captureStream();
                callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
              }
            } else {
-             // Normal h264 filmler arkadan sessiz sedasız akmaya devam eder
              const stream = (videoRef.current as any).captureStream();
              callRef.current = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'movie' } });
            }
@@ -1150,14 +1348,26 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
       broadcastEvent("left_movie");
     }
 
-    if (selectedMovie && currentTime > 5 && !isRemoteStreaming && !isWeb) {
+    if (selectedMovie?.video_path.startsWith("torrent-")) {
+      if (torrentClient.current) {
+         torrentClient.current.torrents.forEach((t: any) => t.destroy());
+      }
+    }
+
+    if (selectedMovie && currentTime > 5 && !isRemoteStreaming && !isWeb && !selectedMovie.video_path.startsWith("torrent-")) {
       const timeToSave = Math.floor(currentTime);
       const isCompleted = duration > 0 && (currentTime / duration) > 0.90; 
       const newIsWatched = isCompleted ? 1 : (selectedMovie.is_watched || 0);
       const newWatchCount = isCompleted ? (selectedMovie.watch_count || 0) + 1 : (selectedMovie.watch_count || 0);
 
-      await updateMovieProgress(selectedMovie.video_path, timeToSave, newIsWatched, newWatchCount);
+      await updateMovieProgress(activeProfile || "default", selectedMovie.video_path, timeToSave, newIsWatched, newWatchCount);
       setMovies(prev => prev.map(m => m.video_path === selectedMovie.video_path ? { ...m, progress: timeToSave, is_watched: newIsWatched, watch_count: newWatchCount, updated_at: new Date().toISOString() } : m));
+      
+      if (isCompleted && selectedMovie.watchlist) {
+        await toggleWatchlist(selectedMovie);
+        showToast("Film bitti, listeden çıkarıldı.", "✅");
+      }
+      
       setSelectedMovie(prev => prev ? { ...prev, progress: timeToSave, is_watched: newIsWatched, watch_count: newWatchCount } : null);
     }
     setLocalSubs([]); setIsPlaying(false); setCurrentTime(0);
@@ -1174,7 +1384,7 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
   };
 
   const handleProgressMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (isRemoteStreaming || !duration) return; 
+    if (isRemoteStreaming || !duration || selectedMovie?.video_path.startsWith("torrent-")) return; 
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percentage = Math.max(0, Math.min(1, x / rect.width));
@@ -1242,13 +1452,30 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
     const rowRef = useRef<HTMLDivElement>(null);
     if (data.length === 0) return null;
 
+    const loopData = [...data, ...data, ...data];
+
+    useEffect(() => {
+      if (rowRef.current) {
+        rowRef.current.scrollLeft = rowRef.current.scrollWidth / 3;
+      }
+    }, []);
+
     const scroll = (direction: "left" | "right") => {
       if (rowRef.current) {
         const { scrollLeft, clientWidth, scrollWidth } = rowRef.current;
+        const singleSetWidth = scrollWidth / 3;
         let scrollTo = direction === "left" ? scrollLeft - clientWidth + 100 : scrollLeft + clientWidth - 100;
-        if (direction === "right" && scrollLeft + clientWidth >= scrollWidth - 50) scrollTo = 0;
-        else if (direction === "left" && scrollLeft <= 0) scrollTo = scrollWidth;
         rowRef.current.scrollTo({ left: scrollTo, behavior: "smooth" });
+
+        setTimeout(() => {
+          if (rowRef.current) {
+            if (rowRef.current.scrollLeft >= singleSetWidth * 2) {
+              rowRef.current.scrollTo({ left: rowRef.current.scrollLeft - singleSetWidth, behavior: "auto" });
+            } else if (rowRef.current.scrollLeft <= 50) {
+              rowRef.current.scrollTo({ left: rowRef.current.scrollLeft + singleSetWidth, behavior: "auto" });
+            }
+          }
+        }, 400); 
       }
     };
 
@@ -1256,9 +1483,15 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
       <div className="mb-10 relative group">
         <h2 className="mb-4 text-xl font-bold text-white md:text-2xl">{title}</h2>
         <button onClick={() => scroll("left")} className="absolute left-0 top-1/2 z-10 hidden -translate-y-1/2 bg-black/60 p-2 text-3xl text-white opacity-0 transition group-hover:opacity-100 md:block hover:scale-110 backdrop-blur rounded-r">❮</button>
-        <div ref={rowRef} className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {data.map(movie => (
-            <div key={movie.video_path} className="w-40 flex-shrink-0 snap-start sm:w-48 xl:w-56" onClick={() => handleMovieClick(movie)}>
+        <div ref={rowRef} className="flex gap-4 overflow-x-auto pb-6 pt-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {loopData.map((movie, idx) => (
+            <div 
+              key={movie.video_path + idx} 
+              tabIndex={0} 
+              className="w-40 flex-shrink-0 sm:w-48 xl:w-56 focus:scale-110 focus:-translate-y-2 focus:z-50 focus:ring-4 focus:ring-white outline-none rounded-lg transition-all duration-300" 
+              onClick={() => handleMovieClick(movie)}
+              onKeyDown={(e) => e.key === 'Enter' && handleMovieClick(movie)}
+            >
               <MovieCardFallback movie={movie} />
             </div>
           ))}
@@ -1268,20 +1501,73 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
     );
   };
 
-  const libraryMovies = useMemo(() => {
-    let filtered = movies.filter(movie => movie.title.toLowerCase().includes(searchQuery.toLowerCase()));
-    if (selectedGenre !== "All") filtered = filtered.filter(movie => movie.genres?.includes(selectedGenre));
-    filtered.sort((a, b) => {
-      if (sortBy === "title_asc") return a.title.localeCompare(b.title);
-      else if (sortBy === "year_desc") return (b.year || 0) - (a.year || 0);
-      else if (sortBy === "rating_desc") return (b.rating || 0) - (a.rating || 0);
-      return 0;
-    });
-    return filtered;
-  }, [movies, searchQuery, sortBy, selectedGenre]);
-
   return (
     <div className="min-h-screen bg-[#0b0b0b] text-white relative flex flex-col overflow-hidden">
+      {/* SİNEMATİK İNTRO */}
+      {showIntro && (
+        <div className="fixed inset-0 z-[99999] bg-[#0b0b0b] flex items-center justify-center transition-opacity duration-500">
+          <style>
+            {`
+              @keyframes kinflix-zoom {
+                0% { transform: scale(1); opacity: 0; filter: blur(10px); }
+                30% { opacity: 1; filter: blur(0px); }
+                100% { transform: scale(1.5); opacity: 0; filter: blur(5px); }
+              }
+              .animate-kinflix { animation: kinflix-zoom 2.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+            `}
+          </style>
+          <h1 className="text-red-600 text-6xl md:text-8xl font-black tracking-tighter animate-kinflix drop-shadow-[0_0_30px_rgba(220,38,38,0.8)]">
+            KINFLIX
+          </h1>
+        </div>
+      )}
+
+      {/* Netflix Stili Kim İzliyor Ekranı */}
+      {!activeProfile && (!isWeb || isHost) && (
+        <div className="fixed inset-0 z-[5000] bg-[#141414] flex flex-col items-center justify-center animate-in fade-in duration-500">
+          <h1 className="text-4xl md:text-5xl font-medium text-white mb-10 tracking-wider text-center">Kim İzliyor?</h1>
+          <div className="flex flex-wrap justify-center gap-4 md:gap-8 items-start px-4">
+            {profiles.map(p => (
+              <div key={p.id} className="flex flex-col items-center gap-4 cursor-pointer group" onClick={() => handleSelectProfile(p.id)}>
+                <div className={`w-24 h-24 md:w-36 md:h-36 rounded-md ${p.color} border-2 border-transparent group-hover:border-white transition-all overflow-hidden flex items-center justify-center text-4xl md:text-6xl shadow-lg`}>
+                  {p.avatar}
+                </div>
+                <span className="text-zinc-500 group-hover:text-white transition-colors text-sm md:text-lg">{p.name}</span>
+              </div>
+            ))}
+            
+            {profiles.length < 4 && (
+              <div className="flex flex-col items-center gap-4 cursor-pointer group" onClick={() => setIsCreatingProfile(true)}>
+                <div className="w-24 h-24 md:w-36 md:h-36 rounded-md border-2 border-zinc-700 group-hover:bg-zinc-800 transition-all flex items-center justify-center text-5xl text-zinc-500 group-hover:text-white">
+                  +
+                </div>
+                <span className="text-zinc-500 group-hover:text-white transition-colors text-sm md:text-lg">Profil Ekle</span>
+              </div>
+            )}
+          </div>
+
+          {isCreatingProfile && (
+            <div className="fixed inset-0 bg-black/90 z-[5010] flex items-center justify-center">
+              <div className="bg-zinc-900 p-8 rounded-xl max-w-sm w-full shadow-2xl border border-zinc-800">
+                <h2 className="text-2xl font-bold mb-4 text-white">Yeni Profil</h2>
+                <input 
+                  type="text" 
+                  placeholder="İsim girin..." 
+                  autoFocus
+                  value={newProfileName} 
+                  onChange={e => setNewProfileName(e.target.value)} 
+                  onKeyDown={e => e.key === 'Enter' && handleAddProfile()}
+                  className="w-full bg-black border border-zinc-700 text-white rounded p-3 mb-6 outline-none focus:border-red-600 transition" 
+                />
+                <div className="flex gap-4">
+                  <button onClick={handleAddProfile} className="flex-1 bg-white text-black font-bold py-3 rounded hover:bg-zinc-200 transition">Kaydet</button>
+                  <button onClick={() => { setIsCreatingProfile(false); setNewProfileName(""); }} className="flex-1 border border-zinc-700 text-white font-bold py-3 rounded hover:bg-zinc-800 transition">İptal</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       
       {toast && (
         <div className="fixed top-8 right-8 z-[9999] flex items-center gap-3 bg-zinc-900 border border-zinc-700 text-white px-6 py-4 rounded-xl shadow-2xl animate-in slide-in-from-right-10 fade-in duration-300">
@@ -1365,6 +1651,8 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
             <button onClick={() => setActiveTab("library")} className={`transition hover:text-zinc-300 ${activeTab === "library" ? "text-white" : "text-zinc-500"}`}>{t.library}</button>
             <button onClick={() => setActiveTab("collections")} className={`transition hover:text-zinc-300 ${activeTab === "collections" ? "text-white" : "text-zinc-500"}`}>{t.collections}</button>
             <button onClick={() => setActiveTab("watchlist")} className={`transition hover:text-zinc-300 ${activeTab === "watchlist" ? "text-white" : "text-zinc-500"}`}>{t.watchlistTab}</button>
+            <button onClick={() => setActiveTab("foryou")} className={`transition hover:text-zinc-300 ${activeTab === "foryou" ? "text-white" : "text-zinc-500"}`}>Sana Özel</button>
+            <button onClick={() => setActiveTab("yts")} className={`transition hover:text-zinc-300 flex items-center gap-1 ${activeTab === "yts" ? "text-green-400" : "text-green-900"}`}>YTS Keşfet</button>
             <button onClick={playRandomMovie} className="ml-4 flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-900/80 px-4 py-1.5 text-xs font-bold text-white transition hover:bg-zinc-800 hover:scale-105">
               {t.random}
             </button>
@@ -1396,19 +1684,16 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
                 <>
                   <div className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-4 text-center">
                     <h3 className="mb-2 text-sm font-semibold text-zinc-400">Sabit İnternet Oda Kodu (Host):</h3>
-                    <div className="bg-black rounded-lg p-2 text-4xl font-black tracking-widest text-green-400 border border-zinc-800">
-                      {peerId || "..."}
-                    </div>
                     <div className="bg-black rounded-lg p-2 text-4xl font-black tracking-widest text-green-400 border border-zinc-800 flex justify-between items-center px-6">
-      <span>{peerId || "..."}</span>
-      {/* YENİ: Oda Kodunu Yenileme Butonu */}
-      <button onClick={() => {
-        localStorage.removeItem("kinflix_host_code");
-        window.location.reload();
-      }} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-2 rounded-lg font-bold border border-zinc-700 transition">
-        🔄 Kodu Değiştir
-      </button>
-    </div>
+                      <span>{peerId || "..."}</span>
+                      <button onClick={() => {
+                        localStorage.removeItem("kinflix_host_code");
+                        window.location.reload();
+                      }} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-2 rounded-lg font-bold border border-zinc-700 transition">
+                        🔄 Kodu Değiştir
+                      </button>
+                    </div>
+                    
                     <h3 className="mt-4 mb-2 text-sm font-semibold text-zinc-400">Yerel IP (Aynı Ev / Wi-Fi İçin):</h3>
                     <div className="bg-black rounded-lg p-2 text-xl font-mono tracking-widest text-blue-400 border border-zinc-800 flex justify-between items-center px-4">
                       <span>{localIp || "Yükleniyor..."}</span>
@@ -1474,7 +1759,6 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
         </div>
       )}
 
-      {/* YENİDEN EKLENDİ: Ayarlar Modalı */}
       {isSettingsOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
           <div className="w-full max-w-2xl rounded-2xl bg-zinc-900 p-8 shadow-2xl">
@@ -1511,7 +1795,7 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
                   <div className="mb-2 flex items-center justify-between"><h3 className="text-lg font-semibold text-zinc-300">{t.libCount} ({libraries.length})</h3><button onClick={chooseFolder} disabled={scanning} className="text-sm font-bold text-red-500 hover:text-red-400">{t.addLib}</button></div>
                   <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950 p-2">
                     {libraries.length === 0 ? <p className="p-2 text-sm text-zinc-500">Yok</p> : libraries.map(lib => (
-                      <div key={lib} className="flex items-center justify-between rounded p-2 hover:bg-zinc-800"><span className="truncate text-sm text-zinc-300">{lib}</span><button onClick={async () => { await removeLibraryFolder(lib); setMovies(await getMovies()); }} className="ml-4 text-xs font-bold text-red-500">{t.remove}</button></div>
+                      <div key={lib} className="flex items-center justify-between rounded p-2 hover:bg-zinc-800"><span className="truncate text-sm text-zinc-300">{lib}</span><button onClick={async () => { await removeLibraryFolder(lib); setMovies(await getMovies(activeProfile || "default")); }} className="ml-4 text-xs font-bold text-red-500">{t.remove}</button></div>
                     ))}
                   </div>
                 </div>
@@ -1530,7 +1814,6 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
         </div>
       )}
 
-      {/* YENİDEN EKLENDİ: Film Detayları Modalı */}
       {selectedMovie && !isPlaying && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-[#0b0b0b] animate-in fade-in zoom-in-95 duration-200">
           <button onClick={() => setSelectedMovie(null)} className="absolute left-8 top-8 z-[60] flex h-12 w-12 items-center justify-center rounded-full bg-black/50 text-2xl text-white backdrop-blur-md transition hover:scale-110 hover:bg-white/20 shadow-2xl">✕</button>
@@ -1543,15 +1826,21 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
               {selectedMovie.runtime && <span>{selectedMovie.runtime} dk</span>}
               <span className="rounded border border-zinc-500 px-1.5 py-0.5 text-xs text-zinc-300">HD</span>
             </div>
-            {selectedMovie.progress && selectedMovie.progress > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb && <div className="mt-4 flex items-center gap-3"><div className="h-1.5 w-64 rounded-full bg-zinc-800"><div className="h-full rounded-full bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{ width: `${Math.min((selectedMovie.progress / ((selectedMovie.runtime || 120) * 60)) * 100, 100)}%` }} /></div></div>}
+            
+            <div className="flex items-center gap-2 mt-4">
+              <button onClick={() => handleLike(selectedMovie.video_path, 1)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-transform hover:scale-110 ${likedMovies[selectedMovie.video_path] === 1 ? 'bg-white text-black' : 'bg-zinc-800 text-white'}`}>👍</button>
+              <button onClick={() => handleLike(selectedMovie.video_path, -1)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-transform hover:scale-110 ${likedMovies[selectedMovie.video_path] === -1 ? 'bg-red-600 text-white' : 'bg-zinc-800 text-white'}`}>👎</button>
+            </div>
+            
+            {(selectedMovie.progress || 0) > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb && <div className="mt-4 flex items-center gap-3"><div className="h-1.5 w-64 rounded-full bg-zinc-800"><div className="h-full rounded-full bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{ width: `${Math.min(((selectedMovie.progress || 0) / ((selectedMovie.runtime || 120) * 60)) * 100, 100)}%` }} /></div></div>}
             
             <div className="mt-8 flex flex-wrap gap-4">
               <button onClick={() => startPlayer()} className="flex items-center justify-center gap-2 rounded bg-white px-8 py-3 text-xl font-bold text-black transition hover:bg-zinc-200">
-                <span className="text-2xl">▶</span> {selectedMovie.progress && (selectedMovie.is_watched || 0) === 0 && !isWeb ? t.resume : t.play}
+                <span className="text-2xl">▶</span> {(selectedMovie.progress || 0) > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb ? t.resume : t.play}
               </button>
               {!isWeb && <button onClick={() => toggleWatchlist(selectedMovie)} className="flex items-center justify-center gap-2 rounded bg-zinc-800/80 backdrop-blur px-8 py-3 text-xl font-bold text-white transition hover:bg-zinc-700">{selectedMovie.watchlist ? "✓ " + t.inWatchlist : "+ " + t.toWatch}</button>}
               
-              {!isWeb && isHost && (
+              {!isWeb && isHost && !selectedMovie.video_path.startsWith("torrent-") && (
                 <button disabled={isConverting} onClick={convertToX264} className={`flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border ${isConverting ? 'bg-blue-600/50 border-blue-500 cursor-not-allowed' : 'bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/40 hover:border-blue-400'}`}>
                   {isConverting ? "⏳ Çevriliyor..." : "🔄 Web İçin Optimize Et (x264)"}
                 </button>
@@ -1568,6 +1857,11 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
               </div>
             </div>
             
+            {sameCollectionMovies.length > 0 && (
+              <div className="mt-16">
+                <MovieRow title="🎬 Aynı Serideki Filmler" data={sameCollectionMovies} />
+              </div>
+            )}
             {similarMovies.length > 0 && (
               <div className="mt-16">
                 <MovieRow title={t.similar} data={similarMovies} />
@@ -1626,13 +1920,13 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
           
           <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-zinc-950">
             {chatMessages.map(msg => (
-<div key={msg.id} className={`relative group max-w-[85%] rounded-xl p-2.5 text-sm shadow-md ${msg.sender === 'me' ? 'bg-blue-600 text-white self-end rounded-tr-sm' : 'bg-zinc-800 text-zinc-200 self-start rounded-tl-sm'}`}>
-                {/* YENİ: Mesajın üstünde gönderenin ismi */}
+              <div key={msg.id} className={`relative group max-w-[85%] rounded-xl p-2.5 text-sm shadow-md ${msg.sender === 'me' ? 'bg-blue-600 text-white self-end rounded-tr-sm' : 'bg-zinc-800 text-zinc-200 self-start rounded-tl-sm'}`}>
                 {msg.author && (
                   <span className={`text-[10px] font-bold block mb-1 opacity-80 ${msg.sender === 'me' ? 'text-blue-200 text-right' : 'text-zinc-400 text-left'}`}>
                     {msg.author}
                   </span>
-                )}                {msg.type === 'text' ? <p className="break-words">{msg.content}</p> : <img src={msg.content} className="rounded-lg w-full object-cover cursor-pointer hover:opacity-80 transition" onClick={async () => { if(!isWeb) { const { openUrl } = await import('@tauri-apps/plugin-opener'); openUrl(msg.content); } else { window.open(msg.content); } }} />}
+                )}
+                {msg.type === 'text' ? <p className="break-words">{msg.content}</p> : <img src={msg.content} className="rounded-lg w-full object-cover cursor-pointer hover:opacity-80 transition" onClick={async () => { if(!isWeb) { const { openUrl } = await import('@tauri-apps/plugin-opener'); openUrl(msg.content); } else { window.open(msg.content); } }} />}
                 
                 {msg.reactions && Object.keys(msg.reactions).length > 0 && (
                   <div className="flex gap-1 mt-1.5 flex-wrap">
@@ -1703,14 +1997,13 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
 
               setDuration(e.currentTarget.duration); 
               
-              if (selectedMovie.progress && selectedMovie.progress > 0 && !isWeb && !isRemoteStreaming) {
-                e.currentTarget.currentTime = selectedMovie.progress;
+              if ((selectedMovie.progress || 0) > 0 && !isWeb && !isRemoteStreaming && !selectedMovie.video_path.startsWith("torrent-")) {
+                e.currentTarget.currentTime = selectedMovie.progress!;
               }
             }}
             className="h-full w-full object-contain cursor-pointer"
           />
 
-          {/* Kendi Altyazı Motorumuz */}
           {activeSubIndex >= 0 && localSubs[activeSubIndex] && (
             <div className={`absolute left-0 right-0 z-[110] flex flex-col items-center justify-end pointer-events-none transition-all duration-300 ${showControls ? 'bottom-32' : 'bottom-12'}`}>
               {localSubs[activeSubIndex].cues
@@ -1731,6 +2024,26 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
               <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4 shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
               <p className="text-white text-xl font-bold animate-pulse">Video Akışı Bekleniyor (P2P)...</p>
             </div>
+          )}
+
+          {duration > 0 && duration - currentTime < 180 && !isRemoteStreaming && !isTV && !selectedMovie.video_path.startsWith("torrent-") && (
+             <div className="absolute bottom-32 right-10 z-[120] bg-black/80 border border-zinc-700 p-4 rounded-xl shadow-2xl backdrop-blur-md animate-in slide-in-from-right w-80">
+               <p className="text-zinc-400 text-[10px] font-bold mb-3 uppercase tracking-widest">Sıradaki Öneri</p>
+               <div className="flex gap-4">
+                 <div className="w-16 h-24 bg-zinc-800 rounded flex-shrink-0">
+                   {(sameCollectionMovies[0] || recommendedMovies[0])?.poster_url && <img src={(sameCollectionMovies[0] || recommendedMovies[0]).poster_url || ""} className="w-full h-full object-cover rounded"/>}
+                 </div>
+                 <div className="flex flex-col justify-center">
+                   <p className="text-white font-bold text-sm line-clamp-2">{(sameCollectionMovies[0] || recommendedMovies[0])?.title || "Bilinmiyor"}</p>
+                   <button onClick={(e) => { 
+                     e.stopPropagation(); 
+                     closePlayer().then(() => setTimeout(() => startPlayer(sameCollectionMovies[0] || recommendedMovies[0]), 500)); 
+                   }} className="mt-2 text-xs bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 rounded transition w-fit">
+                     Hemen Başlat ▶
+                   </button>
+                 </div>
+               </div>
+             </div>
           )}
 
           {currentTime > 10 && currentTime < 120 && !isRemoteStreaming && !isWeb && (
@@ -1859,20 +2172,7 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
             <>
               {activeTab === "home" && (
                 <div className="animate-in fade-in duration-500">
-                  {heroMovie && (
-                    <div className="relative -mt-24 mb-10 h-[70vh] w-full transition-all duration-1000 ease-in-out">
-                      {heroMovie.backdrop_url ? <img src={heroMovie.backdrop_url} key={heroMovie.video_path} className="h-full w-full object-cover opacity-80 animate-in fade-in duration-1000" /> : <div className="h-full w-full bg-zinc-900" />}
-                      <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0b] via-[#0b0b0b]/20 to-[#0b0b0b]/40" />
-                      <div className="absolute bottom-20 left-10 z-10 max-w-2xl drop-shadow-2xl">
-                        <h1 className="text-6xl font-extrabold md:text-7xl">{heroMovie.title}</h1>
-                        <p className="mt-4 line-clamp-3 text-lg font-medium text-zinc-300">{heroMovie.overview}</p>
-                        <div className="mt-6 flex gap-4">
-                          <button onClick={() => startPlayer(heroMovie)} className="flex items-center gap-2 rounded bg-white px-8 py-3 text-xl font-bold text-black transition hover:bg-zinc-200"><span className="text-2xl">▶</span> {heroMovie.progress ? t.resume : t.play}</button>
-                          <button onClick={() => handleMovieClick(heroMovie)} className="flex items-center gap-2 rounded bg-zinc-500/50 px-8 py-3 text-xl font-bold text-white backdrop-blur transition hover:bg-zinc-500/70">{t.info}</button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  <HeroBanner movies={movies} onPlay={startPlayer} onInfo={handleMovieClick} t={t} />
                   <div className="px-10">
                     <MovieRow title={t.continue} data={continueWatching} />
                     <MovieRow title={t.watchlist} data={watchListMovies} />
@@ -1900,6 +2200,36 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
                   )}
                 </div>
               )}
+              {activeTab === "foryou" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <h2 className="mb-2 text-2xl font-bold">✨ Sana Özel Algoritma</h2>
+                  <p className="text-zinc-500 text-sm mb-6">Beğendiğin filmlerin ağırlık grafiğine göre senin için seçilenler.</p>
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                    {recommendedMovies.map((movie: Movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}
+                  </div>
+                </div>
+              )}
+              {activeTab === "yts" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-bold text-green-400">🏴‍☠️ YTS Dünyası</h2>
+                    <span className="text-xs text-zinc-500">P2P Torrent Streaming</span>
+                  </div>
+                  {isFetchingYts ? <div className="text-center text-zinc-500 py-10 animate-pulse">Korsan ağlara bağlanılıyor...</div> : (
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                      {ytsMovies.map((yts: any) => (
+                        <div key={yts.id} className="w-full h-full aspect-[2/3] relative group bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800 hover:border-green-500 transition shadow-lg cursor-pointer" onClick={() => streamYtsMovie(yts)}>
+                          <img src={yts.large_cover_image} alt={yts.title} className="w-full h-full object-cover group-hover:scale-105 transition" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent p-3 flex flex-col justify-end">
+                            <span className="text-green-400 font-bold text-xs mb-1">⭐ {yts.rating}</span>
+                            <span className="text-white font-bold text-sm truncate">{yts.title}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               {activeTab === "library" && (
                 <div className="animate-in fade-in duration-500 px-10 pt-4">
                   <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1909,20 +2239,22 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
                       <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)} className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none transition focus:border-white"><option value="title_asc">{t.sortAZ}</option><option value="year_desc">{t.sortNew}</option><option value="rating_desc">{t.sortRating}</option></select>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">{libraryMovies.map((movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}</div>
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">{libraryMovies.map((movie: Movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}</div>
                 </div>
               )}
             </>
           )}
         </main>
       )}
+
+      {/* İsim Sorma Modalı */}
       {showNameModal && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/90 backdrop-blur-md px-4">
           <div className="w-full max-w-md rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 text-center">
             <h2 className="text-2xl font-bold mb-2">👋 Adın Ne Kanka?</h2>
             <p className="text-zinc-400 text-sm mb-6">Party chatte arkadaşının seni tanıyabilmesi için bir isim gir.</p>
             <input 
-              type="text" placeholder="Örn: Tekin" 
+              type="text" placeholder="Örn: tekin" 
               onKeyDown={(e) => {
                 if(e.key === 'Enter' && (e.target as HTMLInputElement).value.trim()) {
                   const name = (e.target as HTMLInputElement).value.trim();
@@ -1948,7 +2280,6 @@ if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.curr
         </div>
       )}
     </div>
-    
   );
 }
 

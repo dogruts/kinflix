@@ -9,6 +9,9 @@
     "sql:default",
     "sql:allow-execute",
     "opener:default",
+    "updater:default",
+    "updater:allow-check",
+    "updater:allow-download-and-install",
     {
       "identifier": "http:default",
       "allow": [
