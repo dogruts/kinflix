@@ -5,19 +5,216 @@ import Peer, { DataConnection, MediaConnection } from "peerjs";
 import WebTorrent from 'webtorrent/dist/webtorrent.min.js';
 import VirtualTheater from './VirtualTheater';
 
-import { isTV, isWeb } from "./utils/platform";
-import { shuffleArray, generateLocalShortCode, generateRoomCode, normalizePath, parseSrtToCues } from "./utils/helpers";
-import { MovieCardFallback } from "./components/MovieCardFallback";
-import { HeroBanner } from "./components/HeroBanner";
-import { MovieRow } from "./components/MovieRow";
-import type { SortOption, TabState, Lang, SubtitleTrack, ChatMessage } from "./types/app";
-import { dict } from "./i18n";
+const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI_IPC__' in window || '__TAURI__' in window);
+const isTV = typeof navigator !== 'undefined' && /(Web0S|NetCast|SmartTV|Tizen)/i.test(navigator.userAgent);
+const isWeb = !isTauri; 
 
 import { getMovieMetadata } from "./tmdb";
 import {
   initializeDatabase, getMovies, saveMovie, updateMovieMetadata, updateMovieProgress,
   getSetting, setSetting, removeLibraryFolder, removeMovie, clearDatabase, setWatchlist, type Movie,
 } from "./database";
+
+const MovieCardFallback = ({ movie }: { movie: Movie }) => (
+  <div className="w-full h-full aspect-[2/3] relative group bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800 hover:border-zinc-500 transition-all duration-300 shadow-lg cursor-pointer">
+    {movie.poster_url ? (
+      <img src={movie.poster_url} alt={movie.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+    ) : (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800 p-3 text-center">
+        <span className="text-4xl mb-3 opacity-50">🎬</span>
+        <span className="text-zinc-300 text-sm font-bold tracking-wider leading-snug px-1 line-clamp-3">
+          {movie.title}
+        </span>
+      </div>
+    )}
+    <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-3">
+      <h3 className="text-white font-bold text-sm line-clamp-2 leading-tight mb-1">{movie.title}</h3>
+      {movie.year ? <span className="text-zinc-400 text-xs font-semibold">{movie.year}</span> : null}
+      {(movie.progress || 0) > 5 && (movie.is_watched || 0) === 0 && (
+        <div className="w-full h-1 bg-zinc-700 rounded-full mt-2 overflow-hidden">
+          <div className="h-full bg-red-600" style={{ width: `${Math.min(((movie.progress || 0) / ((movie.runtime || 120) * 60)) * 100, 100)}%` }}></div>
+        </div>
+      )}
+    </div>
+    {movie.rating != null && movie.rating > 0 && (
+      <div className="absolute top-2 right-2 bg-black/80 text-yellow-500 text-[11px] font-bold px-1.5 py-0.5 rounded border border-yellow-900/50 backdrop-blur shadow-xl z-10 flex items-center gap-1">
+        ⭐ {movie.rating.toFixed(1)}
+      </div>
+    )}
+  </div>
+);
+
+const HeroBanner = ({ movies, onPlay, onInfo, t }: { movies: Movie[], onPlay: (m: Movie) => void, onInfo: (m: Movie) => void, t: any }) => {
+  const heroMovies = useMemo(() => shuffleArray(movies.filter((m: Movie) => m.backdrop_url)).slice(0, 10), [movies]);
+  const [heroIndex, setHeroIndex] = useState(0);
+
+  useEffect(() => {
+    if (heroMovies.length <= 1) return;
+    const interval = setInterval(() => setHeroIndex(prev => (prev + 1) % heroMovies.length), 8000);
+    return () => clearInterval(interval);
+  }, [heroMovies]);
+
+  const heroMovie = heroMovies[heroIndex] || movies[0];
+  if (!heroMovie) return null;
+
+  return (
+    <div className="relative -mt-24 mb-10 h-[70vh] w-full transition-all duration-1000 ease-in-out">
+      {heroMovie.backdrop_url ? <img src={heroMovie.backdrop_url} key={heroMovie.video_path} className="h-full w-full object-cover opacity-80 animate-in fade-in duration-1000" /> : <div className="h-full w-full bg-zinc-900" />}
+      <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0b] via-[#0b0b0b]/20 to-[#0b0b0b]/40" />
+      <div className="absolute bottom-20 left-10 z-10 max-w-2xl drop-shadow-2xl">
+        <h1 className="text-6xl font-extrabold md:text-7xl">{heroMovie.title}</h1>
+        <p className="mt-4 line-clamp-3 text-lg font-medium text-zinc-300">{heroMovie.overview}</p>
+        <div className="mt-6 flex gap-4">
+          <button onClick={() => onPlay(heroMovie)} className="flex items-center gap-2 rounded bg-white px-8 py-3 text-xl font-bold text-black transition hover:bg-zinc-200"><span className="text-2xl">▶</span> {(heroMovie.progress || 0) > 0 ? t.resume : t.play}</button>
+          <button onClick={() => onInfo(heroMovie)} className="flex items-center gap-2 rounded bg-zinc-500/50 px-8 py-3 text-xl font-bold text-white backdrop-blur transition hover:bg-zinc-500/70">{t.info}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const dict = {
+  tr: {
+    home: "Ana Sayfa", library: "Tüm Filmler", collections: "Koleksiyonlar", watchlistTab: "İzlenecekler", sync: "TMDB Güncelle", addLib: "+ Kütüphane Ekle",
+    syncing: "Eşitleniyor...", scanning: "Taranıyor...", settings: "Ayarlar", emptyLib: "Kütüphanen Bomboş", clickToStart: "Başlamak İçin Tıkla", 
+    emptyWatchlist: "İzlenecekler listeniz şu an boş.", continue: "Kaldığın Yerden Devam Et", newReleases: "Yeni Çıkanlar", topRated: "En Yüksek Puanlılar",
+    watchlist: "İzlenecekler Listem", toWatch: "Sonra İzle", inWatchlist: "Listede", search: "Film, Oyuncu, Yönetmen Ara...", allGenres: "Tüm Türler", sort: "Sırala",
+    sortAZ: "A - Z", sortNew: "En Yeni Yıl", sortRating: "En Yüksek Puan", play: "Oynat", resume: "Devam Et", info: "ⓘ Daha Fazla Bilgi", similar: "Benzer Filmler",
+    noOverview: "Bu film için herhangi bir özet bulunamadı.", apiToken: "TMDB API Token", libCount: "Kütüphaneler", remove: "KALDIR", dangerZone: "Tehlikeli Bölge", 
+    resetDb: "Veritabanını Sıfırla", language: "Arayüz Dili", subs: "Altyazılar", subOff: "Kapalı", searchSubTr: "Altyazı (TR)", searchSubEn: "Altyazı (EN)",
+    party: "Party Watch", joinLabel: "Odaya Katıl (Kod veya IP):", connect: "Bağlan", connected: "Bağlantı Başarılı!", disconnected: "Bağlı Değil",
+    random: "🎲 Rastgele", chatMsg: "Mesaj yaz...", send: "Gönder",
+    min: "dk", h: "s", m: "dk",
+    forYouTitle: "✨ Sana Özel Algoritma", forYouDesc: "Beğendiğin filmlerin ağırlık grafiğine göre senin için seçilenler.",
+    ytsTitle: "🏴‍☠️ YTS Dünyası", ytsDesc: "P2P Torrent Streaming", ytsLoading: "Korsan ağlara bağlanılıyor...",
+    sameCollection: "🎬 Aynı Serideki Filmler", upNext: "Sıradaki Öneri", startNow: "Hemen Başlat ▶", skipIntro: "İntroyu Atla (85s) ❯",
+    whoIsWatching: "Kim İzliyor?", newProfile: "Yeni Profil", addProfile: "Profil Ekle", enterName: "İsim girin...", save: "Kaydet", cancel: "İptal",
+    statsTitle: "📊 İstatistiklerin", statsWatched: "İzlenen Film", statsTime: "İzleme Süresi", statsFavGenre: "En Sevdiğin Tür",
+    chatBtn: "SOHBET", partyChat: "Party Chat", hostCode: "Sabit İnternet Oda Kodu (Host):", changeCode: "🔄 Kodu Değiştir", 
+    localIp: "Yerel IP (Aynı Ev / Wi-Fi İçin):", tvShortCode: "TV Kısa Kodu", enterFriendCode: "Arkadaşının Kodunu Gir:", leaveRoom: "Ağı Kapat ve Odadan Ayrıl", 
+    disconnect: "Odadan Ayrıl / Bağlantıyı Kes", syncCatalog: "🔄 Kataloğu Senkronize Et", joinFromPhone: "Telefondan Katıl", scanQr: "Kameranı okutarak anında odaya gir.", 
+    guestMode: "Misafir Modundasınız 🎭", guestModeDesc: "Oda kurucusunun (Host) kütüphanesini görüntülüyorsunuz. Bütün film verileri doğrudan Host'tan size aktarılıyor.", 
+    systemStatus: "Sistem Durumu", desktopUpdates: "Masaüstü Güncellemeleri", checkUpdates: "Sürüm Kontrolü Yap", checkingUpdates: "⏳ Kontrol Ediliyor...",
+    updateFound: "🎉 Yeni güncelleme bulundu!", upToDate: "✅ Uygulamanız güncel.", updateError: "❌ Güncelleme sunucusuna bağlanılamadı.",
+    convertStarted: "⏳ Çevriliyor...", convertToX264: "🔄 Web İçin Optimize Et (x264)", findFromInternet: "İnternetten Bul (STREMIO)", 
+    searchingStremio: "Stremio'da Aranıyor...", subNotFound: "Altyazı bulunamadı.", downloading: "⏳ İndiriliyor...", connError: "Bağlantı Hatası", 
+    connectingToRoom: "Odaya Bağlanılıyor...", cancelAndReturn: "✕ İptal Et ve Geri Dön", tvDesc: "Televizyon kumandası ile yerel ağı (Kısa TV Kodu) veya IP adresini girerek bağlan."
+  },
+  en: {
+    home: "Home", library: "All Movies", collections: "Collections", watchlistTab: "Watchlist", sync: "Sync TMDB", addLib: "+ Add Library",
+    syncing: "Syncing...", scanning: "Scanning...", settings: "Settings", emptyLib: "Your Library is Empty", clickToStart: "Click to Start", 
+    emptyWatchlist: "Your watchlist is empty.", continue: "Continue Watching", newReleases: "New Releases", topRated: "Top Rated",
+    watchlist: "My Watchlist", toWatch: "Watch Later", inWatchlist: "In Watchlist", search: "Search Movies, Actors, Directors...", allGenres: "All Genres", sort: "Sort By",
+    sortAZ: "A - Z", sortNew: "Newest", sortRating: "Highest Rated", play: "Play", resume: "Resume", info: "ⓘ More Info", similar: "Similar Movies",
+    noOverview: "No overview found for this movie.", apiToken: "TMDB API Token", libCount: "Libraries", remove: "REMOVE", dangerZone: "Danger Zone", 
+    resetDb: "Reset Database", language: "Interface Language", subs: "Subtitles", subOff: "Off", searchSubTr: "Search Sub (TR)", searchSubEn: "Search Sub (EN)",
+    party: "Party Watch", joinLabel: "Join Room (Code or IP):", connect: "Connect", connected: "Connected!", disconnected: "Disconnected",
+    random: "🎲 Random", chatMsg: "Type a message...", send: "Send",
+    min: "m", h: "h", m: "m",
+    forYouTitle: "✨ For You", forYouDesc: "Movies selected for you based on the weighted graph of your liked genres.",
+    ytsTitle: "🏴‍☠️ YTS Discovery", ytsDesc: "P2P Torrent Streaming", ytsLoading: "Connecting to peer networks...",
+    sameCollection: "🎬 In Same Collection", upNext: "Up Next", startNow: "Start Now ▶", skipIntro: "Skip Intro (85s) ❯",
+    whoIsWatching: "Who's Watching?", newProfile: "New Profile", addProfile: "Add Profile", enterName: "Enter name...", save: "Save", cancel: "Cancel",
+    statsTitle: "📊 Your Stats", statsWatched: "Movies Watched", statsTime: "Time Watched", statsFavGenre: "Favorite Genre",
+    chatBtn: "CHAT", partyChat: "Party Chat", hostCode: "Internet Room Code (Host):", changeCode: "🔄 Change Code", 
+    localIp: "Local IP (For Same Wi-Fi):", tvShortCode: "TV Short Code", enterFriendCode: "Enter Friend's Code:", leaveRoom: "Close Network & Leave", 
+    disconnect: "Disconnect / Leave Room", syncCatalog: "🔄 Sync Catalog", joinFromPhone: "Join from Phone", scanQr: "Scan QR with camera to join.", 
+    guestMode: "Guest Mode 🎭", guestModeDesc: "Viewing the Host's library. All movie data is streamed directly from the Host.", 
+    systemStatus: "System Status", desktopUpdates: "Desktop Updates", checkUpdates: "Check for Updates", checkingUpdates: "⏳ Checking...",
+    updateFound: "🎉 Update available!", upToDate: "✅ App is up to date.", updateError: "❌ Failed to connect to update server.",
+    convertStarted: "⏳ Converting...", convertToX264: "🔄 Optimize for Web (x264)", findFromInternet: "Find Online (STREMIO)", 
+    searchingStremio: "Searching Stremio...", subNotFound: "Subtitle not found.", downloading: "⏳ Downloading...", connError: "Connection Error", 
+    connectingToRoom: "Connecting to Room...", cancelAndReturn: "✕ Cancel & Return", tvDesc: "Enter Local IP or TV Short Code using your remote."
+  }
+};
+
+type SortOption = "title_asc" | "year_desc" | "rating_desc";
+type TabState = "home" | "library" | "collections" | "watchlist" | "yts" | "foryou";
+type Lang = "tr" | "en";
+type ParsedCue = { start: number; end: number; text: string };
+type SubtitleTrack = { id: string; url: string; label: string; srtContent: string; offset: number; cues: ParsedCue[] };
+
+type ChatMessage = { 
+  id: string; 
+  sender: "me" | "peer"; 
+  author?: string; 
+  type: "text" | "image"; 
+  content: string; 
+  timestamp: number;
+  reactions?: Record<string, number>; 
+};
+
+const shuffleArray = <T,>(array: T[]): T[] => {
+  const newArr = [...array];
+  for (let i = newArr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+  }
+  return newArr;
+};
+
+const generateLocalShortCode = (ip: string) => {
+  if (!ip) return "";
+  const parts = ip.split('.');
+  if (parts.length === 4) {
+    const val = parseInt(parts[2]) * 256 + parseInt(parts[3]);
+    const valStr = val.toString().padStart(5, '0');
+    if (ip.startsWith("192.168.")) return `9${valStr}`;
+    if (ip.startsWith("10.0.")) return `8${valStr}`;
+  }
+  return "";
+};
+
+const generateRoomCode = () => {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let result = "";
+  for (let i = 0; i < 6; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+
+const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
+
+const parseSrtToCues = (content: string, offsetSeconds: number = 0) => {
+  const cues: ParsedCue[] = [];
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const timeRegex = /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/;
+  
+  let currentCue: Partial<ParsedCue> = {};
+  let textLines: string[] = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith("WEBVTT")) continue; 
+    
+    if (!line) {
+      if (currentCue.start !== undefined && currentCue.end !== undefined && textLines.length > 0) {
+         currentCue.text = textLines.join('\n');
+         cues.push(currentCue as ParsedCue);
+      }
+      currentCue = {};
+      textLines = [];
+      continue;
+    }
+    
+    const match = timeRegex.exec(line);
+    if (match) {
+      const parseTime = (h:string, m:string, s:string, ms:string) => 
+        parseInt(h)*3600 + parseInt(m)*60 + parseInt(s) + parseInt(ms)/1000 + offsetSeconds;
+        
+      currentCue.start = parseTime(match[1], match[2], match[3], match[4]);
+      currentCue.end = parseTime(match[5], match[6], match[7], match[8]);
+    } else if (currentCue.start !== undefined) {
+       textLines.push(line.replace(/<[^>]+>/g, '')); 
+    }
+  }
+  if (currentCue.start !== undefined && currentCue.end !== undefined && textLines.length > 0) {
+    currentCue.text = textLines.join('\n');
+    cues.push(currentCue as ParsedCue);
+  }
+  return cues;
+};
 
 function App() {
   const [lang, setLang] = useState<Lang>("tr");
@@ -1607,6 +1804,65 @@ const handleSeekPlayer = (timeVal: number) => {
     }, 3000);
   };
 
+  const MovieRow = ({ title, data }: { title: string, data: Movie[] }) => {
+    const rowRef = useRef<HTMLDivElement>(null);
+    if (data.length === 0) return null;
+
+    const showArrows = data.length > 5;
+    const loopData = showArrows ? [...data, ...data, ...data] : data;
+
+    useEffect(() => {
+      if (rowRef.current && showArrows) {
+        rowRef.current.scrollLeft = rowRef.current.scrollWidth / 3;
+      }
+    }, [showArrows, data.length]);
+
+    const scroll = (direction: "left" | "right") => {
+      if (rowRef.current) {
+        const { clientWidth } = rowRef.current;
+        const scrollAmount = clientWidth * 0.8;
+        rowRef.current.scrollBy({ left: direction === "left" ? -scrollAmount : scrollAmount, behavior: "smooth" });
+      }
+    };
+
+    const handleScrollEvent = () => {
+      if (!rowRef.current || !showArrows) return;
+      const { scrollLeft, scrollWidth, clientWidth } = rowRef.current;
+      const singleSetWidth = scrollWidth / 3;
+      
+      if (scrollLeft < singleSetWidth * 0.5) {
+        rowRef.current.scrollLeft += singleSetWidth;
+      } else if (scrollLeft > singleSetWidth * 2.5 - clientWidth) {
+        rowRef.current.scrollLeft -= singleSetWidth;
+      }
+    };
+
+    return (
+      <div className="mb-10 relative group">
+        <h2 className="mb-4 text-xl font-bold text-white md:text-2xl">{title}</h2>
+        {showArrows && <button onClick={() => scroll("left")} className="absolute left-0 top-1/2 z-10 hidden -translate-y-1/2 bg-black/80 p-2 text-4xl text-white opacity-0 transition group-hover:opacity-100 md:flex items-center justify-center hover:scale-110 hover:text-red-500 backdrop-blur rounded-r h-full max-h-40">❮</button>}
+        <div 
+          ref={rowRef} 
+          onScroll={handleScrollEvent}
+          className="flex gap-4 overflow-x-auto pb-6 pt-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {loopData.map((movie, idx) => (
+            <div 
+              key={movie.video_path + idx} 
+              tabIndex={0} 
+              className="w-40 flex-shrink-0 sm:w-48 xl:w-56 focus:scale-110 focus:-translate-y-2 focus:z-50 focus:ring-4 focus:ring-white outline-none rounded-lg transition-all duration-300" 
+              onClick={() => handleMovieClick(movie)}
+              onKeyDown={(e) => e.key === 'Enter' && handleMovieClick(movie)}
+            >
+              <MovieCardFallback movie={movie} />
+            </div>
+          ))}
+        </div>
+        {showArrows && <button onClick={() => scroll("right")} className="absolute right-0 top-1/2 z-10 hidden -translate-y-1/2 bg-black/80 p-2 text-4xl text-white opacity-0 transition group-hover:opacity-100 md:flex items-center justify-center hover:scale-110 hover:text-red-500 backdrop-blur rounded-l h-full max-h-40">❯</button>}
+      </div>
+    );
+  };
+
  const getSafeVideoSource = () => {
     if (!selectedMovie || selectedMovie.video_path.startsWith("torrent-")) return ""; 
     const isHevc = /265|hevc/i.test(selectedMovie.video_path);
@@ -1837,11 +2093,11 @@ const handleSeekPlayer = (timeVal: number) => {
                 <div className="animate-in fade-in duration-500">
                   <HeroBanner movies={movies} onPlay={startPlayer} onInfo={handleMovieClick} t={t} />
                   <div className="px-10">
-                    <MovieRow title={t.continue} data={continueWatching} onMovieClick={handleMovieClick} />
-                    <MovieRow title={t.watchlist} data={watchListMovies} onMovieClick={handleMovieClick} />
-                    <MovieRow title={t.newReleases} data={newReleases} onMovieClick={handleMovieClick} />
-                    <MovieRow title={t.topRated} data={topRated} onMovieClick={handleMovieClick} />
-                    {homeGenres.map(item => <MovieRow key={item.genre} title={`${item.genre}`} data={item.movies} onMovieClick={handleMovieClick} />)}
+                    <MovieRow title={t.continue} data={continueWatching} />
+                    <MovieRow title={t.watchlist} data={watchListMovies} />
+                    <MovieRow title={t.newReleases} data={newReleases} />
+                    <MovieRow title={t.topRated} data={topRated} />
+                    {homeGenres.map(item => <MovieRow key={item.genre} title={`${item.genre}`} data={item.movies} />)}
                   </div>
                 </div>
               )}
@@ -1850,7 +2106,7 @@ const handleSeekPlayer = (timeVal: number) => {
                   <h2 className="mb-6 text-2xl font-bold">{t.collections}</h2>
                   {collections.length === 0 ? <div className="text-zinc-500">Herhangi bir koleksiyon bulunamadı.</div> : (
                     <div>
-                      {collections.map(item => <MovieRow key={item.name} title={`🎬 ${item.name}`} data={item.movies} onMovieClick={handleMovieClick} />)}
+                      {collections.map(item => <MovieRow key={item.name} title={`🎬 ${item.name}`} data={item.movies} />)}
                     </div>
                   )}
                 </div>
@@ -2247,12 +2503,12 @@ const handleSeekPlayer = (timeVal: number) => {
             
             {sameCollectionMovies.length > 0 && (
               <div className="mt-16">
-                <MovieRow title="🎬 Aynı Serideki Filmler" data={sameCollectionMovies} onMovieClick={handleMovieClick} />
+                <MovieRow title="🎬 Aynı Serideki Filmler" data={sameCollectionMovies} />
               </div>
             )}
             {similarMovies.length > 0 && (
               <div className="mt-16">
-                <MovieRow title={t.similar} data={similarMovies} onMovieClick={handleMovieClick} />
+                <MovieRow title={t.similar} data={similarMovies} />
               </div>
             )}
           </div>
@@ -2663,6 +2919,94 @@ const handleSeekPlayer = (timeVal: number) => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ANA İÇERİK */}
+      {(partyStatus === 'connected' || (!isWeb && !isTV)) && (
+        <main className="flex-1 pb-10">
+          {error && <div className="mx-10 mb-6 rounded-xl border border-red-900 bg-red-950/30 p-4 text-red-400">Hata: {error}</div>}
+          {movies.length === 0 && !scanning && !syncing ? (
+            <div className="flex min-h-[50vh] flex-col items-center justify-center px-10">
+              <h3 className="text-2xl font-bold">{t.emptyLib}</h3>
+              <button onClick={() => setIsSettingsOpen(true)} className="mt-6 rounded bg-red-600 px-8 py-3 font-bold transition hover:bg-red-700">{t.clickToStart}</button>
+            </div>
+          ) : (
+            <>
+              {activeTab === "home" && (
+                <div className="animate-in fade-in duration-500">
+                  <HeroBanner movies={movies} onPlay={startPlayer} onInfo={handleMovieClick} t={t} />
+                  <div className="px-10">
+                    <MovieRow title={t.continue} data={continueWatching} />
+                    <MovieRow title={t.watchlist} data={watchListMovies} />
+                    <MovieRow title={t.newReleases} data={newReleases} />
+                    <MovieRow title={t.topRated} data={topRated} />
+                    {homeGenres.map(item => <MovieRow key={item.genre} title={`${item.genre}`} data={item.movies} />)}
+                  </div>
+                </div>
+              )}
+              {activeTab === "collections" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <h2 className="mb-6 text-2xl font-bold">{t.collections}</h2>
+                  {collections.length === 0 ? <div className="text-zinc-500">Herhangi bir koleksiyon bulunamadı.</div> : (
+                    <div>
+                      {collections.map(item => <MovieRow key={item.name} title={`🎬 ${item.name}`} data={item.movies} />)}
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === "watchlist" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <h2 className="mb-6 text-2xl font-bold">{t.watchlist}</h2>
+                  {watchListMovies.length === 0 ? <div className="text-zinc-500">{t.emptyWatchlist}</div> : (
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">{watchListMovies.map((movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}</div>
+                  )}
+                </div>
+              )}
+              {activeTab === "foryou" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <h2 className="mb-2 text-2xl font-bold">✨ Sana Özel Algoritma</h2>
+                  <p className="text-zinc-500 text-sm mb-6">Beğendiğin filmlerin ağırlık grafiğine göre senin için seçilenler.</p>
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                    {recommendedMovies.map((movie: Movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}
+                  </div>
+                </div>
+              )}
+              {activeTab === "yts" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-bold text-green-400">🏴‍☠️ YTS Dünyası</h2>
+                    <span className="text-xs text-zinc-500">P2P Torrent Streaming</span>
+                  </div>
+                  {isFetchingYts ? <div className="text-center text-zinc-500 py-10 animate-pulse">Korsan ağlara bağlanılıyor...</div> : (
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                      {ytsMovies.map((yts: any) => (
+                        <div key={yts.id} className="w-full h-full aspect-[2/3] relative group bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800 hover:border-green-500 transition shadow-lg cursor-pointer" onClick={() => streamYtsMovie(yts)}>
+                          <img src={yts.large_cover_image} alt={yts.title} className="w-full h-full object-cover group-hover:scale-105 transition" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent p-3 flex flex-col justify-end">
+                            <span className="text-green-400 font-bold text-xs mb-1">⭐ {yts.rating}</span>
+                            <span className="text-white font-bold text-sm truncate">{yts.title}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === "library" && (
+                <div className="animate-in fade-in duration-500 px-10 pt-4">
+                  <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <input type="text" placeholder={t.search} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full max-w-xs rounded border border-zinc-800 bg-zinc-900/80 px-4 py-2.5 outline-none transition focus:border-white" />
+                    <div className="flex gap-4">
+                      <select value={selectedGenre} onChange={(e) => setSelectedGenre(e.target.value)} className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none transition focus:border-white"><option value="All">{t.allGenres}</option>{allGenres.map(g => <option key={g} value={g}>{g}</option>)}</select>
+                      <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)} className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm outline-none transition focus:border-white"><option value="title_asc">{t.sortAZ}</option><option value="year_desc">{t.sortNew}</option><option value="rating_desc">{t.sortRating}</option></select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">{libraryMovies.map((movie: Movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}</div>
+                </div>
+              )}
+            </>
+          )}
+        </main>
       )}
 
       {/* "BANA FİLM BUL" SİHİRBAZI MODALI */}
