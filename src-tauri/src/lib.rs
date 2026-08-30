@@ -263,24 +263,57 @@ fn save_subtitle_file(video_path: String, content: String, lang: String) -> Resu
     std::fs::write(srt_path, content).map_err(|e| e.to_string())
 }
 
+use walkdir::WalkDir;
+use regex::Regex;
+
 #[tauri::command]
 fn scan_movies(path: String) -> Result<Vec<serde_json::Value>, String> {
     let mut movies = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(path.clone()) {
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if entry_path.is_file() {
-                if let Some(ext) = entry_path.extension() {
-                    let ext_str = ext.to_string_lossy().to_lowercase();
-                    if ext_str == "mp4" || ext_str == "mkv" || ext_str == "avi" {
-                        let title = entry_path.file_stem().unwrap().to_string_lossy().to_string();
-                        movies.push(serde_json::json!({
-                            "title": title,
-                            "year": null,
-                            "folder_path": path,
-                            "video_path": entry_path.to_string_lossy().to_string()
-                        }));
+    
+    // Regex: S01E01 veya 1x01 tarzı dizi bölümlerini bulmak için
+    let tv_regex = Regex::new(r"(?i)(S\d{1,2}E\d{1,2}|\b\d{1,2}x\d{1,2}\b)").unwrap();
+    let year_regex = Regex::new(r"(?i)[\[\(]?((?:19|20)\d{2})[\]\)]?").unwrap();
+    let junk_regex = Regex::new(r"(?i)(1080p|720p|480p|2160p|4k|bluray|x264|x265|hevc|dual|remux|webrip|hdrip|hdtv|yify|yts|aac|dd5|xvid).*$").unwrap();
+
+    // WalkDir ile derin tarama (recursive)
+    for entry in WalkDir::new(path.clone()).into_iter().filter_map(|e| e.ok()) {
+        let entry_path = entry.path();
+        if entry_path.is_file() {
+            if let Some(ext) = entry_path.extension() {
+                let ext_str = ext.to_string_lossy().to_lowercase();
+                if ext_str == "mp4" || ext_str == "mkv" || ext_str == "avi" {
+                    let original_title = entry_path.file_stem().unwrap().to_string_lossy().to_string();
+                    
+                    let mut is_series = 0;
+                    let mut clean_title = original_title.clone();
+                    
+                    // 1. Dizi Tespiti
+                    if tv_regex.is_match(&clean_title) {
+                        is_series = 1;
                     }
+                    
+                    // 2. Yıl Tespiti (Varsa)
+                    let mut year = None;
+                    if let Some(caps) = year_regex.captures(&clean_title) {
+                        if let Ok(y) = caps[1].parse::<i32>() {
+                            year = Some(y);
+                        }
+                    }
+
+                    // 3. Çöp Yazıları Temizleme (Smart Parser)
+                    clean_title = junk_regex.replace_all(&clean_title, "").to_string();
+                    clean_title = clean_title.replace(".", " ").replace("_", " ").trim().to_string();
+                    // Parantezleri sil
+                    let bracket_regex = Regex::new(r"(\[.*?\]|\(.*?\))").unwrap();
+                    clean_title = bracket_regex.replace_all(&clean_title, "").trim().to_string();
+
+                    movies.push(serde_json::json!({
+                        "title": if clean_title.is_empty() { original_title } else { clean_title },
+                        "year": year,
+                        "folder_path": path.clone(),
+                        "video_path": entry_path.to_string_lossy().to_string(),
+                        "is_series": is_series
+                    }));
                 }
             }
         }
@@ -420,6 +453,10 @@ async fn generate_ai_subtitle(video_path: String) -> Result<String, String> {
     let srt_output_path = v_path.with_extension("ai.srt"); 
     let model_path = "C:\\Kinflix\\models\\ggml-base.bin"; // İndirdiğin Whisper modelinin yolu
     
+    if !Path::new(model_path).exists() {
+        return Err(format!("Whisper yapay zeka modeli bulunamadı!\nLütfen model dosyasını şuraya indirin:\n{}", model_path));
+    }
+
     println!("🤖 1/2: Sesi ayrıştırıyorum...");
     
     // 1. Adım: FFmpeg ile sesi 16kHz WAV formatına çevir (Whisper sadece bunu anlar)

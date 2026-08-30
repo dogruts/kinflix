@@ -1,6 +1,6 @@
 [package]
 name = "kinflix"
-version = "0.7.0"
+version = "1.0.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -34,5 +34,7 @@ futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 tauri-plugin-updater = "2"
-reqwest = { version = "0.11", features = ["stream", "blocking"] }
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "stream", "blocking"] }
+walkdir = "2.5.0"
+regex = "1.13.1"
 

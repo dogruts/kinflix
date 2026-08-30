@@ -1,7 +1,7 @@
 {
   "name": "kinflix",
   "private": true,
-  "version": "0.7.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -40,7 +40,9 @@
     "@types/react-dom": "^19.1.6",
     "@types/three": "^0.185.4",
     "@types/webtorrent": "^3.0.0",
+    "@vitejs/plugin-legacy": "^8.2.3",
     "@vitejs/plugin-react": "^4.6.0",
+    "terser": "^5.51.2",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
     "vite-plugin-node-polyfills": "^0.28.0"

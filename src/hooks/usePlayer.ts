@@ -204,7 +204,11 @@ export function usePlayer(p: UsePlayerParams) {
       setActiveSubIndex(localSubs.length);
 
     } catch (err: any) {
-      showToast(t.genericErrorPrefix + err, "❌");
+      if (typeof err === "string" && err.includes("Whisper yapay zeka modeli bulunamadı")) {
+        alert(err);
+      } else {
+        showToast(t.genericErrorPrefix + err, "❌");
+      }
     } finally {
       setIsGeneratingSub(false);
     }
@@ -348,12 +352,12 @@ export function usePlayer(p: UsePlayerParams) {
     });
   };
 
-  const searchStremioSubtitles = async (targetLang: "tur" | "eng") => {
+  const searchStremioSubtitles = async (targetLang: string, queryOverride?: string) => {
     if (!selectedMovie) return;
     setIsSearchingOS(true);
     setOsError(null);
     try {
-      let cleanQuery = selectedMovie.title.replace(/\b(1080p|720p|480p|2160p|4k|bluray|x264|x265|hevc|dual|remux|webrip|hdrip|hdtv|yify|yts)\b.*/i, '').replace(/(\[.*?\]|\(.*?\))/g, '').replace(/[-_.]/g, ' ').trim();
+      let cleanQuery = queryOverride || selectedMovie.title.replace(/\b(1080p|720p|480p|2160p|4k|bluray|x264|x265|hevc|dual|remux|webrip|hdrip|hdtv|yify|yts)\b.*/i, '').replace(/(\[.*?\]|\(.*?\))/g, '').replace(/[-_.]/g, ' ').trim();
       const metaUrl = `https://v3-cinemeta.strem.io/catalog/movie/top/search=${encodeURIComponent(cleanQuery)}.json`;
       const metaRes = await fetch(metaUrl);
       if(!metaRes.ok) throw new Error("Cinemeta çöktü");
@@ -371,9 +375,10 @@ export function usePlayer(p: UsePlayerParams) {
       const subData = await subRes.json();
 
       if (subData.subtitles && subData.subtitles.length > 0) {
-        const filtered = subData.subtitles.filter((s:any) => s.lang === targetLang);
+        // hedef dile göre filtrele, yoksa hepsini getir
+        const filtered = targetLang === 'all' ? subData.subtitles : subData.subtitles.filter((s:any) => s.lang === targetLang || s.id.includes(targetLang));
         if(filtered.length === 0) { setOsError(t.subNotFound); setOsResults([]); }
-        else { setOsResults(filtered.slice(0, 10)); }
+        else { setOsResults(filtered.slice(0, 15)); }
       } else { setOsError(t.subNotFound); }
     } catch (err: any) { setOsError(t.connError); }
     setIsSearchingOS(false);

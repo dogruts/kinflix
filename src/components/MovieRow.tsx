@@ -42,13 +42,13 @@ export const MovieRow = ({ title, data, onMovieClick }: { title: string, data: M
       <div
         ref={rowRef}
         onScroll={handleScrollEvent}
-        className="flex gap-4 overflow-x-auto pb-6 pt-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex gap-4 overflow-x-auto pb-6 pt-2 snap-x snap-mandatory [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {loopData.map((movie, idx) => (
           <div
             key={movie.video_path + idx}
             tabIndex={0}
-            className="w-40 flex-shrink-0 sm:w-48 xl:w-56 focus:scale-110 focus:-translate-y-2 focus:z-50 focus:ring-4 focus:ring-white outline-none rounded-lg transition-all duration-300"
+            className="w-40 flex-shrink-0 sm:w-48 xl:w-56 snap-start focus:scale-110 focus:-translate-y-2 focus:z-50 focus:ring-4 focus:ring-white outline-none rounded-lg transition-all duration-300"
             onClick={() => onMovieClick(movie)}
             onKeyDown={(e) => e.key === 'Enter' && onMovieClick(movie)}
           >

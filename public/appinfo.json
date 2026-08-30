@@ -1,15 +1,12 @@
 {
   "id": "com.tekin.kinflix",
-  "version": "0.7.0",
-  "vendor": "Kinflix Corp",
+  "version": "1.0.0",
+  "vendor": "Tekin",
   "type": "web",
-  "main": "tv.html",
+  "main": "index.html",
   "title": "Kinflix",
-  "appDescription": "Kinflix P2P Media Player",
-  "iconColor": "#E50914",
+  "appDescription": "Kinflix WebOS Party Watch App",
+  "iconColor": "#dc2626",
   "resolution": "1920x1080",
-  "bgColor": "#0b0b0b",
-  "transparent": false,
-  "largeIcon": "icon.jpg",
-  "icon": "icon.jpg"
+  "bgColor": "#000000"
 }

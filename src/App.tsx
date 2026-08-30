@@ -40,8 +40,18 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [isVirtualTheaterOpen, setIsVirtualTheaterOpen] = useState(false);
+  // YENİ: Gerçek Saat State'i
+  const [realTime, setRealTime] = useState("");
+  useEffect(() => {
+    const updateTime = () => setRealTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
+  // 3D Sinema Teması State'i (VIP, Space, Retro)
+  const [isVirtualTheaterOpen, setIsVirtualTheaterOpen] = useState(false);
+  const [theaterTheme, setTheaterTheme] = useState<'vip' | 'space' | 'retro'>('vip');
 
   const [isGeneratingSub, setIsGeneratingSub] = useState(false);
 
@@ -57,6 +67,10 @@ function App() {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null); 
+  
+  // FaceCam Ref'leri
+  const localCamRef = useRef<HTMLVideoElement>(null);
+  const remoteCamRef = useRef<HTMLVideoElement>(null);
 
   const transcodeOffsetRef = useRef<number>(0);
 
@@ -64,7 +78,10 @@ function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
-  // Ses Güçlendirici (Voice Booster) State ve Referansları
+  // Uçuşan Emojiler State'i
+  const [floatingEmojis, setFloatingEmojis] = useState<{id: string, emoji: string, left: string}[]>([]);
+
+  // Ses Güçlendirici State ve Referansları
   const [isVoiceBoosted, setIsVoiceBoosted] = useState(false);
   const audioCtxRef = useRef<any>(null);
   const sourceNodeRef = useRef<any>(null);
@@ -79,13 +96,15 @@ function App() {
   const [wizardResult, setWizardResult] = useState<Movie | null>(null);
   const [isWizardSpinning, setIsWizardSpinning] = useState(false);
 
+  // YouTube Link Input
+  const [ytInput, setYtInput] = useState("");
+
   const handleWizardFind = () => {
     setIsWizardSpinning(true);
     setWizardResult(null);
 
     setTimeout(() => {
       let filtered = movies;
-      
       if (wizardFilters.duration === "short") filtered = filtered.filter(m => (m.runtime || 0) > 0 && m.runtime! <= 90);
       else if (wizardFilters.duration === "medium") filtered = filtered.filter(m => (m.runtime || 0) > 90 && m.runtime! <= 120);
       else if (wizardFilters.duration === "long") filtered = filtered.filter(m => (m.runtime || 0) > 120);
@@ -114,6 +133,20 @@ function App() {
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   
+  // YENİ: Video Görüntü Ayarları (Parlaklık, Kontrast, Doygunluk)
+  const [videoFilters, setVideoFilters] = useState({ brightness: 1, contrast: 1, saturation: 1 });
+  const [showVideoSettings, setShowVideoSettings] = useState(false);
+
+  // YENİ: Otomatik İntro Atlama State'i
+  const [autoSkipIntro, setAutoSkipIntro] = useState(localStorage.getItem("kinflix_auto_skip") === "true");
+  
+  // YENİ: Altyazı Arama Geliştirmesi
+  const [subSearchQuery, setSubSearchQuery] = useState("");
+  const [subSearchLang, setSubSearchLang] = useState("tur");
+
+  // YENİ: Altyazı Kelime Çeviri
+  const [hoveredWord, setHoveredWord] = useState<{word: string, translation: string, x: number, y: number, loading: boolean} | null>(null);
+
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number>(0);
 
@@ -126,7 +159,6 @@ function App() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [osError, setOsError] = useState<string | null>(null);
 
-  // Altyazı Özelleştirme
   const [subSettings, setSubSettings] = useState({
     color: localStorage.getItem("kinflix_sub_color") || "text-white",
     size: localStorage.getItem("kinflix_sub_size") || "2.4vw",
@@ -139,7 +171,6 @@ function App() {
     localStorage.setItem("kinflix_sub_"+key, val);
   };
 
-  // Oyuncu/Yönetmen Keşif Modalı
   const [personModal, setPersonModal] = useState<{name: string, photoUrl: string | null} | null>(null);
 
   const handlePersonClick = async (name: string) => {
@@ -183,7 +214,9 @@ function App() {
   const [remoteStream, _setRemoteStream] = useState<MediaStream | null>(null);
   
   const [isMicActive, setIsMicActive] = useState(false);
+  const [isCamActive, setIsCamActive] = useState(false);
   const localMicStreamRef = useRef<MediaStream | null>(null);
+  const camCallRef = useRef<MediaConnection | null>(null);
   
   const [isConverting, setIsConverting] = useState(false);
 
@@ -193,16 +226,19 @@ function App() {
 
   const [guestName, setGuestName] = useState<string>(localStorage.getItem("kinflix_guest_name") || "");
   const [showNameModal, setShowNameModal] = useState(false);
+  const [isStatsOpen, setIsStatsOpen] = useState(false);
 
   const [runtimeFormat, setRuntimeFormat] = useState<"min" | "hour">("min");
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
   const [ytsMovies, setYtsMovies] = useState<any[]>([]);
   const [isFetchingYts, setIsFetchingYts] = useState(false);
+
+  const [showSpotify, setShowSpotify] = useState(false);
   
   const torrentClient = useRef<any>(null);
 
-const [profiles, setProfiles] = useState<{id: string, name: string, color: string, avatar: string}[]>(
+  const [profiles, setProfiles] = useState<{id: string, name: string, color: string, avatar: string}[]>(
     JSON.parse(localStorage.getItem("kinflix_profiles") || '[{"id":"1","name":"tekin","color":"bg-blue-600","avatar":"🥷"}]')
   );
   const [activeProfile, setActiveProfile] = useState<string>(localStorage.getItem("kinflix_profile") || "");
@@ -287,7 +323,6 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
   const [sortBy, setSortBy] = useState<SortOption>("title_asc");
   const [selectedGenre, setSelectedGenre] = useState<string>("All");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [tmdbToken, setTmdbToken] = useState("");
 
   const libraries = useMemo(() => Array.from(new Set(movies.map(m => m.folder_path))), [movies]);
@@ -313,33 +348,68 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
   const continueWatching = useMemo(() => movies.filter(m => (m.progress || 0) > 5 && (m.is_watched || 0) === 0).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")), [movies]);
   const watchListMovies = useMemo(() => movies.filter(m => m.watchlist === 1).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")), [movies]);
   
-  const topRated = useMemo(() => {
+  // Rastgele listelerin her render'da (örneğin saniye güncellendiğinde) sıfırlanmasını önlemek için state kullanıyoruz.
+  const [newReleases, setNewReleases] = useState<Movie[]>([]);
+  const [homeGenres, setHomeGenres] = useState<{genre: string, movies: Movie[]}[]>([]);
+  const [topRated, setTopRated] = useState<Movie[]>([]);
+  const [similarMovies, setSimilarMovies] = useState<Movie[]>([]);
+  const [recommendedMovies, setRecommendedMovies] = useState<Movie[]>([]);
+
+  useEffect(() => {
+    if (movies.length === 0) return;
+
+    // Top Rated
     const top50 = [...movies].filter(m => m.rating && m.rating > 0).sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, 50);
-    return shuffleArray(top50).slice(0, 15);
-  }, [movies]);
+    const topRatedShuffled = shuffleArray(top50).slice(0, 15);
+    setTopRated(topRatedShuffled);
 
-  const newReleases = useMemo(() => {
+    // New Releases
     const new50 = [...movies].filter(m => m.year).sort((a, b) => (b.year || 0) - (a.year || 0)).slice(0, 50);
-    return shuffleArray(new50).slice(0, 15);
-  }, [movies]);
+    setNewReleases(shuffleArray(new50).slice(0, 15));
 
-  const homeGenres = useMemo(() => {
+    // Home Genres
     const randomGenres = shuffleArray(allGenres).slice(0, 3);
-    return randomGenres.map(genre => {
+    const hg = randomGenres.map(genre => {
       const genreMovies = movies.filter(m => m.genres?.includes(genre));
       return { genre, movies: shuffleArray(genreMovies).slice(0, 15) };
     }).filter(g => g.movies.length > 0);
-  }, [movies, allGenres]);
+    setHomeGenres(hg);
 
-  const similarMovies = useMemo(() => {
-    if (!selectedMovie) return [];
-    return movies.filter(m => 
+    // Recommended
+    const likedPaths = Object.keys(likedMovies).filter(k => likedMovies[k] === 1);
+    const dislikedPaths = Object.keys(likedMovies).filter(k => likedMovies[k] === -1);
+    const genreWeights: Record<string, number> = {};
+    
+    movies.forEach(m => {
+      if (likedPaths.includes(m.video_path) && m.genres) {
+        m.genres.split(", ").forEach(g => { genreWeights[g] = (genreWeights[g] || 0) + 1; });
+      }
+    });
+
+    const recommendations = movies
+      .filter(m => !likedPaths.includes(m.video_path) && !dislikedPaths.includes(m.video_path))
+      .map(m => {
+        let score = 0;
+        if (m.genres) m.genres.split(", ").forEach(g => { score += (genreWeights[g] || 0); });
+        return { ...m, matchScore: score };
+      })
+      .filter(m => m.matchScore > 0)
+      .sort((a, b) => b.matchScore - a.matchScore)
+      .slice(0, 15);
+      
+    setRecommendedMovies(recommendations.length > 0 ? recommendations : topRatedShuffled);
+  }, [movies, allGenres, likedMovies]);
+
+  useEffect(() => {
+    if (!selectedMovie || movies.length === 0) return;
+    const similar = movies.filter(m => 
       m.video_path !== selectedMovie.video_path && 
       m.genres && selectedMovie.genres && 
       m.genres.split(", ").some(g => selectedMovie.genres?.includes(g))
-    ).sort(() => 0.5 - Math.random()).slice(0, 15);
+    );
+    setSimilarMovies(shuffleArray(similar).slice(0, 15));
   }, [selectedMovie, movies]);
-  
+
   const sameCollectionMovies = useMemo(() => {
     if (!selectedMovie || !selectedMovie.collection_name) return [];
     return movies.filter(m => m.collection_name === selectedMovie.collection_name && m.video_path !== selectedMovie.video_path);
@@ -374,59 +444,36 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
     return filtered;
   }, [movies, searchQuery, sortBy, selectedGenre]);
 
-  const recommendedMovies = useMemo(() => {
-    const likedPaths = Object.keys(likedMovies).filter(k => likedMovies[k] === 1);
-    const dislikedPaths = Object.keys(likedMovies).filter(k => likedMovies[k] === -1);
-    const genreWeights: Record<string, number> = {};
-    
-    movies.forEach(m => {
-      if (likedPaths.includes(m.video_path) && m.genres) {
-        m.genres.split(", ").forEach(g => { genreWeights[g] = (genreWeights[g] || 0) + 1; });
-      }
-    });
-
-    const recommendations = movies
-      .filter(m => !likedPaths.includes(m.video_path) && !dislikedPaths.includes(m.video_path))
-      .map(m => {
-        let score = 0;
-        if (m.genres) m.genres.split(", ").forEach(g => { score += (genreWeights[g] || 0); });
-        return { ...m, matchScore: score };
-      })
-      .filter(m => m.matchScore > 0)
-      .sort((a, b) => b.matchScore - a.matchScore)
-      .slice(0, 15);
-      
-    return recommendations.length > 0 ? recommendations : topRated;
-  }, [movies, likedMovies, topRated]);
-
-  // YTS API Çağrısı
+  // YTS API Çağrısı (Zırhlı Çözüm)
   useEffect(() => {
     if (activeTab === "yts" && ytsMovies.length === 0) {
       setIsFetchingYts(true);
-      
       const fetchYts = async () => {
-        const mirrors = [
-          "https://yts.torrentbay.to/api/v2/list_movies.json?limit=24&sort_by=like_count",
-          "https://yts.proxm.cc/api/v2/list_movies.json?limit=24&sort_by=like_count",
-          "https://yts.unblocked.lol/api/v2/list_movies.json?limit=24&sort_by=like_count"
-        ];
-
-        for (const url of mirrors) {
-          try {
+        const url = "https://yts.mx/api/v2/list_movies.json?limit=24&sort_by=like_count";
+        
+        try {
+          let data;
+          if (!isWeb) {
+            // Tauri ortamı, CORS'a takılmaz
+            const { fetch } = await import('@tauri-apps/plugin-http');
             const res = await fetch(url);
-            if (!res.ok) continue;
-            const data = await res.json();
-            if (data?.data?.movies) {
-              setYtsMovies(data.data.movies);
-              return; 
-            }
-          } catch (err) {
-            console.warn(`${url} engelli, diğerine geçiliyor...`);
+            data = await res.json();
+          } else {
+            // Web ortamı için Proxy
+            const res = await fetch("https://api.allorigins.win/get?url=" + encodeURIComponent(url));
+            const proxyData = await res.json();
+            data = JSON.parse(proxyData.contents);
           }
-        }
-        showToast(t.ytsUnreachable, "🚫");
-      };
 
+          if (data?.data?.movies) {
+            setYtsMovies(data.data.movies);
+            return; 
+          }
+        } catch (err) {
+          console.warn("YTS API hatası:", err);
+        }
+        showToast("YTS sunucularına ulaşılamadı. Lütfen internet bağlantınızı kontrol edin.", "🚫");
+      };
       fetchYts().finally(() => setIsFetchingYts(false));
     }
   }, [activeTab, ytsMovies.length, lang]);
@@ -454,7 +501,6 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
           const storedMovies = await getMovies(activeProfile || "default");
           setMovies(storedMovies);
           initPeerHost();
-          // HOST: Yerel WebSocket ağına da dahil ol (Aynı ağdan gelen misafirleri dinlemek için)
           connectWebSocket("127.0.0.1");
         } catch (error) { setError(String(error)); }
       } else {
@@ -477,7 +523,6 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
           }
         }
       }
-
       const savedChat = localStorage.getItem("kinflix_chat_history");
       if (savedChat) setChatMessages(JSON.parse(savedChat));
     }
@@ -548,9 +593,10 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
     } catch (error) { setError(String(error)); }
   }
 
-  async function scanFolder(path: string) {
+  async function scanFolder(path: string, silent = false) {
     if (isWeb) return;
-    setScanning(true); setError(null);
+    if (!silent) setScanning(true);
+    if (!silent) setError(null);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const result = await invoke<Movie[]>("scan_movies", { path });
@@ -564,18 +610,47 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
         if (!scannedPaths.includes(dbMovie.video_path)) await removeMovie(dbMovie.video_path);
       }
       setMovies(await getMovies(activeProfile || "default"));
-    } catch (error) { setError(String(error)); } finally { setScanning(false); }
+    } catch (error) { 
+      if (!silent) setError(String(error)); 
+    } finally { 
+      if (!silent) setScanning(false); 
+    }
   }
 
- async function syncMovieMetadata() {
+  // YENİ: Akıllı Auto-Watch (Klasör Dinleme) Sistemi
+  // Tarama döngüsünü engellemek için sadece sekme/pencere görünür olduğunda (visibilitychange) çalışır.
+  const moviesRefForScan = useRef(movies);
+  useEffect(() => { moviesRefForScan.current = movies; }, [movies]);
+
+  useEffect(() => {
+    if (isWeb) return;
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && !scanning) {
+        const libs = Array.from(new Set(moviesRefForScan.current.map(m => m.folder_path)));
+        for (const lib of libs) {
+          await scanFolder(lib, true); // Sessiz tarama
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [scanning, isWeb]);
+
+  async function syncMovieMetadata(silent = false) {
     if (syncing || isWeb) return;
-    if (!tmdbToken) { setIsSettingsOpen(true); return; }
-    setSyncing(true); setError(null);
+    if (!tmdbToken) { 
+      if (!silent) setIsSettingsOpen(true); 
+      return; 
+    }
+    setSyncing(true); 
+    if (!silent) setError(null);
     try {
       const storedMovies = await getMovies(activeProfile || "default");
-      
-      // YENİ: Sadece daha önce metadata çekilmemiş (yeni eklenen) filmlere öncelik ver
       const pendingMovies = storedMovies.filter(m => !m.overview || m.overview.trim() === "");
+      if (silent && pendingMovies.length === 0) {
+        setSyncing(false);
+        return; // Sessiz modda güncellenecek yoksa direkt çık
+      }
       const targetMovies = pendingMovies.length > 0 ? pendingMovies : storedMovies;
 
       let successCount = 0;
@@ -603,14 +678,15 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             failCount++;
           }
         }));
-        
-        if (i + batchSize < targetMovies.length) {
-          await new Promise(r => setTimeout(r, 400));
-        }
+        if (i + batchSize < targetMovies.length) await new Promise(r => setTimeout(r, 400));
       }
       setMovies(await getMovies(activeProfile || "default"));
-      showToast(`${t.syncSuccessMsg} ${successCount}`, "🚀");
-    } catch (error) { setError(String(error)); } finally { setSyncing(false); }
+      if (!silent) showToast(`${t.syncSuccessMsg} ${successCount}`, "🚀");
+    } catch (error) { 
+      if (!silent) setError(String(error)); 
+    } finally { 
+      setSyncing(false); 
+    }
   }
 
   const toggleWatchlist = async (movie: Movie) => {
@@ -627,11 +703,42 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
     setSelectedMovie(randomMovie);
   };
 
+  const spawnFloatingEmoji = (emoji: string) => {
+    const id = Date.now() + Math.random().toString();
+    const left = Math.random() * 80 + 10 + '%';
+    setFloatingEmojis(prev => [...prev, { id, emoji, left }]);
+    setTimeout(() => {
+      setFloatingEmojis(prev => prev.filter(e => e.id !== id));
+    }, 4000);
+  };
+
   const networkHandlerRef = useRef<Function | null>(null);
 
   const handleMovieClick = (movie: Movie) => {
     setSelectedMovie(movie);
     setBgVideoPlaying(false);
+  };
+
+  const playYouTubeVideo = () => {
+    if(!ytInput.trim()) return;
+    let ytId = ytInput;
+    if (ytInput.includes('v=')) ytId = ytInput.split('v=')[1].split('&')[0];
+    else if (ytInput.includes('youtu.be/')) ytId = ytInput.split('youtu.be/')[1].split('?')[0];
+
+    const ytMovie: Movie = {
+      video_path: `yt-${ytId}`,
+      title: "YouTube Party Watch",
+      year: new Date().getFullYear(),
+      folder_path: "YouTube",
+      poster_url: `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`,
+      overview: "YouTube'dan canlı senkronize video akışı.",
+      runtime: 0
+    };
+
+    setYtInput("");
+    setIsWizardOpen(false);
+    setSelectedMovie(ytMovie);
+    startPlayer(ytMovie);
   };
 
   const startPlayerRef = useRef<(movieOverride?: Movie) => void>(() => {});
@@ -654,7 +761,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
 
   const {
     togglePlay, toggleFullscreen, toggleMute, toggleVoiceBoost, handleGenerateAISubtitle,
-    convertToX264, changeSubtitle, updateSubDelay, searchStremioSubtitles, downloadStremioSubtitle,
+    changeSubtitle, updateSubDelay, searchStremioSubtitles, downloadStremioSubtitle,
     streamYtsMovie, startPlayer, closePlayer, formatTime, handleProgressMouseMove, handleSeekPlayer,
     handleVolumeChangePlayer, changePlaybackSpeed, togglePip, handleMouseMove, getSafeVideoSource,
   } = usePlayer({
@@ -672,12 +779,189 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
     toggleWatchlist, broadcastEvent, showToast, t,
   });
 
+  // YENİ: Çift Tıklama ile İleri/Geri Sarma
+  const handlePlayerDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (isRemoteStreaming && connMode === 'webrtc' && !isHost) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    
+    if (x < rect.width / 3) {
+      handleSeekPlayer(currentTime - 10);
+      showToast("⏪ 10sn Geri", "⏱️");
+    } else if (x > rect.width * (2 / 3)) {
+      handleSeekPlayer(currentTime + 10);
+      showToast("10sn İleri ⏩", "⏱️");
+    } else {
+      toggleFullscreen();
+    }
+  };
+
+  // YENİ: Fare Tekerleği ile Ses Kontrolü
+  const handlePlayerWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const delta = e.deltaY < 0 ? 0.05 : -0.05;
+    const newVol = Math.max(0, Math.min(1, volume + delta));
+    setVolume(newVol);
+    if (videoRef.current) videoRef.current.volume = newVol;
+    setIsMuted(newVol === 0);
+    showToast(`Ses: %${Math.round(newVol * 100)}`, newVol === 0 ? "🔇" : "🔊");
+  };
+
+  // YENİ: Ekran Görüntüsü / GIF Alma
+  const takeScreenshot = () => {
+    if (!videoRef.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Uygulanan filtreleri canvas'a da ekle
+    ctx.filter = `brightness(${videoFilters.brightness}) contrast(${videoFilters.contrast}) saturate(${videoFilters.saturation})`;
+    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    
+    if (partyStatus === 'connected') {
+      const activeName = profiles.find(p => p.id === activeProfile)?.name;
+      const authorName = guestName || (isHost ? activeName || "Host" : "Misafir");
+      const msg: ChatMessage = { id: Date.now().toString(), sender: "me", author: authorName, type: "image", content: dataUrl, timestamp: Date.now() };
+      
+      setChatMessages(prev => {
+        const newChat = [...prev, msg];
+        localStorage.setItem("kinflix_chat_history", JSON.stringify(newChat));
+        return newChat;
+      });
+      broadcastEvent("chat_msg", { msg });
+      showToast("Ekran görüntüsü lobiye gönderildi!", "📸");
+      if (!isChatOpen) setIsChatOpen(true);
+    } else {
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `Kinflix_${selectedMovie?.title || 'Screenshot'}_${formatTime(currentTime)}.jpg`;
+      a.click();
+      showToast("Ekran görüntüsü kaydedildi!", "📸");
+    }
+  };
+
+  // YENİ: Altyazı Kelime Çeviri Mantığı
+  const handleWordHover = async (word: string, e: React.MouseEvent) => {
+    // Kelimeyi temizle (noktalama işaretlerini at)
+    const cleanWord = word.replace(/[^a-zA-ZçğıöşüÇĞIÖŞÜ]/g, '').toLowerCase();
+    if (!cleanWord || cleanWord.length < 2) return;
+
+    // Sadece İngilizce -> Türkçe çeviri yapalım (Stremio'dan genelde ingilizce indiriliyor)
+    // Eğer film oynuyorsa, duraklat ki kullanıcı okuyabilsin
+    if (isVideoPlaying && videoRef.current) {
+      videoRef.current.pause();
+      setIsVideoPlaying(false);
+      broadcastEvent("pause", { time: videoRef.current.currentTime });
+    }
+
+    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    setHoveredWord({ word: cleanWord, translation: "Çevriliyor...", x: rect.left + rect.width / 2, y: rect.top - 10, loading: true });
+
+    try {
+      // Ücretsiz ve limitsiz MyMemory API'si (Saniye başı çok istek atılırsa blocklanabilir ama hover için ideal)
+      const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanWord)}&langpair=en|tr`);
+      const data = await res.json();
+      const translation = data.responseData.translatedText;
+      
+      setHoveredWord({
+        word: cleanWord,
+        translation: translation,
+        x: rect.left + rect.width / 2,
+        y: rect.top - 10,
+        loading: false
+      });
+    } catch (err) {
+      setHoveredWord({ word: cleanWord, translation: "Çevrilemedi", x: rect.left + rect.width / 2, y: rect.top - 10, loading: false });
+    }
+  };
+
   useEffect(() => { startPlayerRef.current = startPlayer; }, [startPlayer]);
+
+  // Gamepad Polling Sistemi
+  useEffect(() => {
+    if (!isPlaying) return;
+    let frame: number;
+    let prevBtns: boolean[] = [];
+
+    const pollGamepad = () => {
+      const gp = navigator.getGamepads()[0];
+      if (gp) {
+        const btns = gp.buttons.map(b => b.pressed);
+        if (btns[0] && !prevBtns[0]) togglePlay(); 
+        if (btns[1] && !prevBtns[1]) closePlayer(); 
+        if (btns[6] && !prevBtns[6]) handleSeekPlayer(currentTime - 10); 
+        if (btns[7] && !prevBtns[7]) handleSeekPlayer(currentTime + 10); 
+        if (btns[14] && !prevBtns[14]) handleSeekPlayer(currentTime - 10); 
+        if (btns[15] && !prevBtns[15]) handleSeekPlayer(currentTime + 10); 
+        prevBtns = btns;
+      }
+      frame = requestAnimationFrame(pollGamepad);
+    };
+    frame = requestAnimationFrame(pollGamepad);
+    return () => cancelAnimationFrame(frame);
+  }, [isPlaying, currentTime]);
+
+  const toggleFaceCam = async () => {
+    if (isCamActive) {
+      if (localMicStreamRef.current) localMicStreamRef.current.getTracks().forEach(t => t.stop());
+      setIsCamActive(false);
+      broadcastEvent("facecam_closed");
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localMicStreamRef.current = stream;
+        if (localCamRef.current) {
+           localCamRef.current.srcObject = stream;
+           localCamRef.current.play();
+        }
+        setIsCamActive(true);
+        if (connRef.current && peerRef.current) {
+          const call = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'facecam' } });
+          camCallRef.current = call;
+        }
+      } catch (err) { alert("Kamera/Mikrofon izni reddedildi!"); }
+    }
+  };
 
   const toggleVirtualTheater = (open: boolean) => {
     setIsVirtualTheaterOpen(open);
     if (partyStatus === 'connected') broadcastEvent(open ? "enter_theater" : "exit_theater");
   };
+
+  useEffect(() => {
+    const originalHandler = networkHandlerRef.current;
+    networkHandlerRef.current = async (data: any) => {
+      if (originalHandler) await originalHandler(data);
+
+      if (data.action === "floating_emoji") {
+         spawnFloatingEmoji(data.emoji);
+      }
+      else if (data.action === "change_theme") {
+         setTheaterTheme(data.theme);
+      }
+      else if (data.action === "facecam_closed") {
+         if (remoteCamRef.current) remoteCamRef.current.srcObject = null;
+      }
+    };
+    
+    if (peerRef.current) {
+       peerRef.current.on('call', (call) => {
+          if (call.metadata?.type === "facecam") {
+            call.answer();
+            call.on("stream", (remoteStream) => {
+              if (remoteCamRef.current) {
+                 remoteCamRef.current.srcObject = remoteStream;
+                 remoteCamRef.current.play().catch(() => {});
+              }
+            });
+          }
+       });
+    }
+  });
 
   const theaterCompanionName = partyStatus === 'connected'
     ? (isHost ? connectedGuests[0]?.name : hostName)
@@ -685,6 +969,26 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
 
   return (
     <div className="min-h-screen bg-[#0b0b0b] text-white relative flex flex-col overflow-hidden">
+      
+      {/* UÇUŞAN EMOJİLER RENDERER */}
+      <div className="fixed inset-0 z-[999999] pointer-events-none overflow-hidden">
+        {floatingEmojis.map(f => (
+          <div key={f.id} className="absolute bottom-0 text-5xl md:text-7xl animate-float-up drop-shadow-2xl" style={{ left: f.left }}>
+            {f.emoji}
+          </div>
+        ))}
+        <style>
+          {`
+            @keyframes floatUp {
+              0% { transform: translateY(100vh) scale(0.5); opacity: 1; }
+              50% { transform: translateY(50vh) scale(1.5) rotate(15deg); opacity: 1; }
+              100% { transform: translateY(-20vh) scale(1) rotate(-15deg); opacity: 0; }
+            }
+            .animate-float-up { animation: floatUp 4s ease-out forwards; }
+          `}
+        </style>
+      </div>
+
       {/* SİNEMATİK İNTRO */}
       {showIntro && (
         <div className="fixed inset-0 z-[99999] bg-[#0b0b0b] flex items-center justify-center transition-opacity duration-500">
@@ -701,6 +1005,32 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
           <h1 className="text-red-600 text-6xl md:text-8xl font-black tracking-tighter animate-kinflix drop-shadow-[0_0_30px_rgba(220,38,38,0.8)]">
             KINFLIX
           </h1>
+        </div>
+      )}
+
+      {/* Kinflix Radyo (Spotify) Lobi Modu */}
+      {(!isPlaying && partyStatus === 'connected' || activeTab === 'home') && !isPlaying && (
+        <div className="fixed bottom-6 left-6 z-[150] flex flex-col items-start gap-2 animate-in fade-in slide-in-from-bottom-5">
+          {showSpotify && (
+            <div className="bg-black/90 p-1 rounded-2xl border border-zinc-800 shadow-2xl overflow-hidden w-[300px]">
+              <iframe 
+                style={{ borderRadius: '12px' }} 
+                src="https://open.spotify.com/embed/playlist/37i9dQZF1DWZeKCadgRdKQ?utm_source=generator&theme=0" 
+                width="100%" 
+                height="152" 
+                frameBorder="0" 
+                allowFullScreen={false} 
+                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" 
+                loading="lazy"
+              ></iframe>
+            </div>
+          )}
+          <button 
+            onClick={() => setShowSpotify(!showSpotify)} 
+            className="bg-green-500 hover:bg-green-400 text-black font-bold px-4 py-2 rounded-full shadow-[0_0_15px_rgba(34,197,94,0.4)] transition hover:scale-105 flex items-center gap-2"
+          >
+            <span className="text-lg">🎵</span> {showSpotify ? "Radyoyu Kapat" : "Kinflix Radyo"}
+          </button>
         </div>
       )}
 
@@ -850,7 +1180,6 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             <button onClick={() => setIsWizardOpen(true)} className="ml-2 flex items-center gap-2 rounded-full border border-red-900/50 bg-red-600/20 px-4 py-1.5 text-xs font-bold text-red-500 transition hover:bg-red-600/40 hover:scale-105">
               {t.findMovieNav}
             </button>
-            
           </nav>
         </div>
         <div className="flex items-center gap-3">
@@ -858,7 +1187,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             🎉 {partyStatus === 'connected' ? (isHost ? t.roomCreated : t.guestModeShort) : t.party}
           </button>
           {isHost && movies.length > 0 && !isWeb && (
-            <button onClick={syncMovieMetadata} disabled={syncing} className="rounded bg-zinc-800/80 px-4 py-2 text-sm font-bold backdrop-blur transition hover:bg-zinc-700 disabled:opacity-50">
+            <button onClick={() => syncMovieMetadata()} disabled={syncing} className="rounded bg-zinc-800/80 px-4 py-2 text-sm font-bold backdrop-blur transition hover:bg-zinc-700 disabled:opacity-50">
               {syncing ? t.syncing : t.sync}
             </button>
           )}
@@ -867,7 +1196,6 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
         </div>
       </header>
 
-      {/* ANA İÇERİK - MİSSİNG BÖLÜM BURASIYDI */}
       {(partyStatus === 'connected' || (!isWeb && !isTV)) && (
         <main className="flex-1 pb-10">
           {error && <div className="mx-10 mb-6 rounded-xl border border-red-900 bg-red-950/30 p-4 text-red-400">{t.errorPrefix} {error}</div>}
@@ -963,7 +1291,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 <h2 className="text-3xl font-bold">🎉 {t.party}</h2>
               </div>
               
-{!isWeb && isHost ? (
+              {!isWeb && isHost ? (
                 <>
                   <div className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-4 text-center">
                     <h3 className="mb-2 text-sm font-semibold text-zinc-400">{t.hostCode}</h3>
@@ -995,7 +1323,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                         )}
                       </div>
                       {generateLocalShortCode(localIp) && (
-                        <span
+                        <span 
                           onClick={() => { navigator.clipboard.writeText(generateLocalShortCode(localIp)); showToast(t.tvCodeCopied, "📋"); }}
                           className="text-sm bg-blue-900/30 text-blue-300 px-3 py-1 rounded border border-blue-800/50 flex flex-col items-center cursor-pointer hover:bg-blue-800/60 transition"
                           title={t.copyTvCodeTitle}
@@ -1017,7 +1345,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                       <button onClick={() => connectParty(targetAddress)} className="rounded-lg bg-red-600 px-6 font-bold hover:bg-red-700 transition">{t.connect}</button>
                     </div>
                   </div>
-
+                  
                   {partyStatus === 'connected' && (
                      <button onClick={disconnectParty} className="mt-4 w-full rounded bg-red-600/20 py-3 text-red-500 font-bold hover:bg-red-600/40 border border-red-900/50 transition">
                        {t.leaveRoom}
@@ -1028,7 +1356,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 <div className="text-center py-6">
                    <h3 className="text-2xl font-bold text-green-400 mb-2">{t.connectedSuccessfully}</h3>
                    <p className="text-zinc-400 mb-8">{t.viewingHostLibrary}</p>
-
+                   
                    <button onClick={() => {
                      if (partyStatus === 'connected') {
                        broadcastEvent("request_catalog");
@@ -1038,14 +1366,14 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                    }} className="w-full rounded bg-blue-600/20 py-3 text-blue-400 font-bold hover:bg-blue-600/40 border border-blue-900/50 transition mb-4">
                      {t.syncCatalog}
                    </button>
-
+                   
                    <button onClick={disconnectParty} className="w-full rounded bg-red-600/20 py-3 text-red-500 font-bold hover:bg-red-600/40 border border-red-900/50 transition">
                      {t.disconnect}
                    </button>
                 </div>
               )}
             </div>
-
+            
             {!isWeb && isHost && (
               <div className="w-48 flex flex-col items-center justify-center border-l border-zinc-800 pl-8">
                  <h3 className="text-sm font-bold text-zinc-400 mb-4 text-center">{t.joinFromPhone}</h3>
@@ -1113,7 +1441,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
               <div className="text-center py-6">
                 <h3 className="text-2xl font-bold text-white mb-4">{t.guestMode}</h3>
                 <p className="text-zinc-400 leading-relaxed max-w-md mx-auto">{t.guestModeDesc}<br/><br/>{t.enjoyTheShow}</p>
-
+                
                 <div className="mt-8 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 max-w-xs mx-auto">
                   <h3 className="text-blue-500 font-bold mb-2">{t.systemStatus}</h3>
                   <p className="text-sm text-zinc-300">{t.systemStatusDesc}</p>
@@ -1168,7 +1496,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${bgVideoPlaying ? 'opacity-0' : 'opacity-100'}`} 
               />
             )}
-{bgVideoPlaying && !selectedMovie.video_path.startsWith("torrent-") && (
+            {bgVideoPlaying && !selectedMovie.video_path.startsWith("torrent-") && !selectedMovie.video_path.startsWith("yt-") && (
               <>
                 <video 
                   src={tauriConvertFileSrc ? tauriConvertFileSrc(selectedMovie.video_path) : ""} 
@@ -1176,8 +1504,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                   autoPlay
                   className="absolute inset-0 w-full h-full object-cover opacity-60 animate-in fade-in duration-1000"
                   onLoadedMetadata={(e) => { 
-                    // Sadece filmin yarısına (0.5) sarsın yeter, başka bir koda ihtiyacı yok
-                    e.currentTarget.currentTime = ((selectedMovie.runtime || 120) * 60) * 0.5; 
+                    e.currentTarget.currentTime = (((selectedMovie.runtime || 0) || 120) * 60) * 0.5; 
                   }}
                 />
                 
@@ -1197,7 +1524,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             <div className="mt-6 flex flex-wrap items-center gap-4 text-sm font-semibold text-zinc-300">
               {selectedMovie.rating != null && selectedMovie.rating > 0 && <span className="flex items-center gap-1 text-yellow-500 font-bold text-base">⭐ {selectedMovie.rating.toFixed(1)} IMDB</span>}
               {selectedMovie.year && <span>{selectedMovie.year}</span>}
-              {selectedMovie.runtime && <span>{selectedMovie.runtime} {t.min}</span>}
+              {(selectedMovie.runtime || 0) > 0 && <span>{selectedMovie.runtime} {t.min}</span>}
               <span className="rounded border border-zinc-500 px-1.5 py-0.5 text-xs text-zinc-300">HD</span>
             </div>
             
@@ -1206,25 +1533,26 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
               <button onClick={() => handleLike(selectedMovie.video_path, -1)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-transform hover:scale-110 ${likedMovies[selectedMovie.video_path] === -1 ? 'bg-red-600 text-white' : 'bg-zinc-800 text-white'}`}>👎</button>
             </div>
             
-            {(selectedMovie.progress || 0) > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb && <div className="mt-4 flex items-center gap-3"><div className="h-1.5 w-64 rounded-full bg-zinc-800"><div className="h-full rounded-full bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{ width: `${Math.min(((selectedMovie.progress || 0) / ((selectedMovie.runtime || 120) * 60)) * 100, 100)}%` }} /></div></div>}
+            {(selectedMovie.progress || 0) > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb && <div className="mt-4 flex items-center gap-3"><div className="h-1.5 w-64 rounded-full bg-zinc-800"><div className="h-full rounded-full bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{ width: `${Math.min(((selectedMovie.progress || 0) / (((selectedMovie.runtime || 0) || 120) * 60)) * 100, 100)}%` }} /></div></div>}
             
             <div className="mt-8 flex flex-wrap gap-4">
               <button onClick={() => startPlayer()} className="flex items-center justify-center gap-2 rounded bg-white px-8 py-3 text-xl font-bold text-black transition hover:bg-zinc-200">
                 <span className="text-2xl">▶</span> {(selectedMovie.progress || 0) > 0 && (selectedMovie.is_watched || 0) === 0 && !isWeb ? t.resume : t.play}
               </button>
 
-              {/* 3D SİNEMA MODU BUTONU BURAYA GELECEK */}
-              <button
+              <button 
                 onClick={() => {
-                  startPlayer(); // Önce filmi normal oynatıcıda başlatıyoruz (videoRef oluşsun diye)
-                  setTimeout(() => toggleVirtualTheater(true), 800); // 800ms sonra 3D salonu açıyoruz
+                  startPlayer();
+                  setTimeout(() => {
+                     toggleVirtualTheater(true);
+                  }, 800); 
                 }}
                 className="flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border bg-purple-600/20 border-purple-500/50 hover:bg-purple-600/40 hover:border-purple-400"
               >
                 👓 {t.theaterModeBtn}
               </button>
 
-                {!isWeb && !selectedMovie.video_path.startsWith("torrent-") && (
+                {!isWeb && !selectedMovie.video_path.startsWith("torrent-") && !selectedMovie.video_path.startsWith("yt-") && (
                   <div className="mt-4 max-w-sm w-full">
                     {convertingMoviePath === selectedMovie.video_path ? (
                       <div className="w-full bg-zinc-900/80 rounded-xl p-4 border border-zinc-700 backdrop-blur">
@@ -1265,11 +1593,6 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 )}
               {!isWeb && <button onClick={() => toggleWatchlist(selectedMovie)} className="flex items-center justify-center gap-2 rounded bg-zinc-800/80 backdrop-blur px-8 py-3 text-xl font-bold text-white transition hover:bg-zinc-700">{selectedMovie.watchlist ? "✓ " + t.inWatchlist : "+ " + t.toWatch}</button>}
               
-              {!isWeb && isHost && !selectedMovie.video_path.startsWith("torrent-") && (
-                <button disabled={isConverting} onClick={convertToX264} className={`flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border ${isConverting ? 'bg-blue-600/50 border-blue-500 cursor-not-allowed' : 'bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/40 hover:border-blue-400'}`}>
-                  {isConverting ? t.convertStarted : t.convertToX264}
-                </button>
-              )}
             </div>
 
             <div className="mt-10 flex flex-col md:flex-row gap-10">
@@ -1304,420 +1627,32 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
         </div>
       )}
 
-      {isStatsOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4 animate-in fade-in zoom-in-95">
-          <div className="w-full max-w-lg rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 relative overflow-hidden">
-            <div className="absolute -top-20 -right-20 w-64 h-64 bg-red-600/20 rounded-full blur-3xl pointer-events-none"></div>
-            <div className="mb-8 flex items-center justify-between relative z-10">
-              <h2 className="text-3xl font-extrabold text-white">{t.statsTitle}</h2>
-              <button onClick={() => setIsStatsOpen(false)} className="text-3xl text-zinc-500 hover:text-white transition">✕</button>
-            </div>
-            <div className="grid grid-cols-2 gap-4 relative z-10">
-              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 text-center shadow-lg">
-                <p className="text-4xl font-black text-white">{userStats.watchedCount}</p>
-                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">{t.statsWatched}</p>
-              </div>
-              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 text-center shadow-lg">
-                <p className="text-4xl font-black text-red-500">{userStats.hours}s</p>
-                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">{t.statsTime}</p>
-              </div>
-              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 text-center shadow-lg col-span-2">
-                <p className="text-3xl font-black text-white truncate px-2">{userStats.favGenre}</p>
-                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">{t.statsFavGenre}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {!isTV && partyStatus === 'connected' && !isPlaying && (
-        <button onClick={() => setIsChatOpen(!isChatOpen)} className="fixed bottom-8 right-8 z-[150] flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 shadow-2xl hover:scale-110 transition-transform text-2xl relative">
-          💬
-          {unreadCount > 0 && (
-            <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full shadow-lg border border-red-900 animate-bounce">
-              {unreadCount}
-            </span>
-          )}
-        </button>
-      )}
-
-      {/* SOHBET VE LOBİ PENCERESİ */}
-      {!isTV && isChatOpen && partyStatus === 'connected' && (
-        <div className="fixed right-0 top-0 bottom-0 w-80 bg-zinc-950 border-l border-zinc-800 z-[250] flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
-          <div className="p-4 bg-zinc-900 border-b border-zinc-800 flex justify-between items-center shadow-md">
-            <h3 className="font-bold text-white flex items-center gap-2">{t.partyLobbyHeading} <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span></h3>
-            <button onClick={toggleVoiceChat} className={`flex items-center justify-center w-8 h-8 rounded-full transition ${isMicActive ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-zinc-700 hover:bg-zinc-600'}`}>
-              {isMicActive ? '🎙️' : '🎤'}
-            </button>
-            <button onClick={() => setIsChatOpen(false)} className="text-zinc-400 hover:text-white transition ml-2">✕</button>
-          </div>
-          
-          {/* Lobi Kişileri */}
-          <div className="bg-zinc-950 p-3 border-b border-zinc-800">
-            <p className="text-xs text-zinc-500 font-bold mb-2 uppercase">{t.whoIsInRoom}</p>
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2 text-sm text-yellow-400 font-bold">
-                👑 {isHostRef.current ? (profiles.find(p => p.id === activeProfile)?.name || t.youHostFallback) : hostName}
-              </div>
-
-              {isHostRef.current ? (
-                connectedGuests.length > 0 ? (
-                  connectedGuests.map((guest, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm text-zinc-300 pl-4 border-l-2 border-zinc-700">
-                      👤 {guest.name}
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-xs text-zinc-600 italic pl-4">{t.nobodyJoinedYet}</div>
-                )
-              ) : (
-                <div className="flex items-center gap-2 text-sm text-zinc-300 pl-4 border-l-2 border-zinc-700">
-                   👤 {guestName || localStorage.getItem("kinflix_guest_name") || t.youFallback}
-                </div>
-              )}
-            </div>
-          </div>
-          
-          {/* Mesajlaşma Alanı */}
-          <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-zinc-950">
-            {chatMessages.map(msg => (
-              <div key={msg.id} className={`relative group max-w-[85%] rounded-xl p-2.5 text-sm shadow-md ${msg.sender === 'me' ? 'bg-blue-600 text-white self-end rounded-tr-sm' : 'bg-zinc-800 text-zinc-200 self-start rounded-tl-sm'}`}>
-                {msg.author && (
-                  <span className={`text-[10px] font-bold block mb-1 opacity-80 ${msg.sender === 'me' ? 'text-blue-200 text-right' : 'text-zinc-400 text-left'}`}>
-                    {msg.author}
-                  </span>
-                )}
-                {msg.type === 'text' ? <p className="break-words">{msg.content}</p> : <img src={msg.content} className="rounded-lg w-full object-cover cursor-pointer hover:opacity-80 transition" onClick={async () => { if(!isWeb) { const { openUrl } = await import('@tauri-apps/plugin-opener'); openUrl(msg.content); } else { window.open(msg.content); } }} />}
-                
-                {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                  <div className="flex gap-1 mt-1.5 flex-wrap">
-                    {Object.entries(msg.reactions).map(([emo, count]) => (
-                      <span key={emo} className={`text-xs rounded-full px-1.5 py-0.5 border ${msg.sender === 'me' ? 'bg-blue-700 border-blue-500' : 'bg-zinc-700 border-zinc-600'}`}>
-                        {emo} <span className="opacity-70">{count}</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <span className="text-[10px] opacity-50 block mt-1 text-right">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                
-                <div className={`absolute -top-4 ${msg.sender === 'me' ? 'left-0' : 'right-0'} hidden group-hover:flex bg-zinc-800 border border-zinc-700 rounded-full shadow-xl p-1 gap-1 z-50`}>
-                  {['👍', '❤️', '😂', '😲'].map(emo => (
-                     <button key={emo} onClick={() => sendReaction(msg.id, emo)} className="hover:scale-125 transition px-1">{emo}</button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-          
-          <div className="bg-zinc-900 border-t border-zinc-800 flex flex-col">
-            <div className="flex gap-3 px-4 pt-2 pb-1 text-xl justify-center border-b border-zinc-800/50 bg-black/20">
-              {['😀', '😂', '❤️', '🔥', '👍', '😲'].map(emo => (
-                <button key={emo} onClick={() => setChatInput(prev => prev + emo)} className="hover:scale-125 transition drop-shadow-md">{emo}</button>
-              ))}
-            </div>
-            <div className="flex gap-2 items-center p-3">
-              <label className="cursor-pointer text-xl hover:scale-110 transition text-zinc-400 hover:text-white">
-                📷 <input type="file" className="hidden" accept="image/*" onChange={handleSendChatImage} />
-              </label>
-              <input type="text" className="flex-1 bg-black border border-zinc-800 rounded-full px-4 py-2 text-sm text-white outline-none focus:border-blue-500 transition" placeholder={t.chatMsg} value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChatText()} />
-              <button onClick={handleSendChatText} className="text-blue-500 font-bold px-2 hover:text-blue-400 transition">➤</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isPlaying && selectedMovie && (
-        <div 
-          ref={playerContainerRef} 
-          onMouseMove={handleMouseMove} 
-          onClick={() => {if(showSubMenu) setShowSubMenu(false); if(showSpeedMenu) setShowSpeedMenu(false);}} 
-          className={`fixed inset-0 z-[100] bg-black flex flex-col group ${showControls ? "controls-visible" : "controls-hidden"}`}
-        >
-<video
-            ref={videoRef} 
-            crossOrigin="anonymous" 
-            src={getSafeVideoSource()} 
-            autoPlay 
-            playsInline
-            onClick={togglePlay}
-            onTimeUpdate={(e) => { 
-              // 1. MİSAFİR KENDİ KAFASINA GÖRE SÜRE GÜNCELLEYEMEZ
-              if (isRemoteStreaming && !isHostRef.current) return;
-
-              // 2. MKV 10 SANİYE/BAŞA SARMA ÇÖZÜMÜ (Offset'i ekliyoruz)
-              const cTime = e.currentTarget.currentTime + transcodeOffsetRef.current;
-              setCurrentTime(cTime);
-
-              // 3. HOST İSE ZAMANI MİSAFİRLERE YAYINLA
-              if (isHostRef.current && partyStatusRef.current === 'connected') {
-                if (Math.floor(cTime) !== lastSyncTimeRef.current) {
-                  lastSyncTimeRef.current = Math.floor(cTime);
-                  
-                  // MKV Infinity verirse TMDB süresini (runtime * 60) yedek olarak gönder
-                  const safeDuration = (e.currentTarget.duration && e.currentTarget.duration !== Infinity) 
-                    ? e.currentTarget.duration 
-                    : ((selectedMovieRef.current?.runtime || 120) * 60);
-                    
-                  broadcastEvent("sync_time", { time: cTime, duration: safeDuration });
-                }
-              }
-            }}
-            onLoadedMetadata={(e) => { 
-              if (isRemoteStreaming && !isHostRef.current) return;
-
-              // MKV transcode yüzünden süre bozuk gelirse kütüphaneden çek
-              const actualDuration = (e.currentTarget.duration && e.currentTarget.duration > 0 && e.currentTarget.duration !== Infinity) 
-                 ? e.currentTarget.duration 
-                 : (selectedMovieRef.current?.runtime || 120) * 60;
-              
-              setDuration(actualDuration); 
-              
-              // Kalındığı yerden devam etme (Sadece sıfırdan başlıyorsa)
-              if ((selectedMovie.progress || 0) > 0 && !isWeb && !isRemoteStreaming && !selectedMovie.video_path.startsWith("torrent-")) {
-                if (transcodeOffsetRef.current === 0) {
-                  e.currentTarget.currentTime = selectedMovie.progress!;
-                }
-              }
-            }}
-            className="h-full w-full object-contain cursor-pointer"
-          />
-
-          {activeSubIndex >= 0 && localSubs[activeSubIndex] && (
-            <div className={`absolute left-0 right-0 z-[110] flex flex-col items-center justify-end pointer-events-none transition-all duration-300 ${showControls ? 'bottom-32' : 'bottom-12'}`}>
-              {localSubs[activeSubIndex].cues
-                .filter(c => currentTime >= c.start && currentTime <= c.end)
-                .map((c, i) => (
-                  <div key={i} className="text-center mb-1">
-                    {c.text.split('\n').map((line, j) => (
-                      <span 
-                        key={j} 
-                        className={`inline-block font-bold leading-tight ${subSettings.color}`} 
-                        style={{ 
-                          fontSize: subSettings.size,
-                          textShadow: subSettings.bg === 'text-shadow' ? '0px 0px 6px black, 0px 0px 12px black' : 'none',
-                          backgroundColor: subSettings.bg === 'solid' ? 'rgba(0,0,0,0.8)' : 'transparent',
-                          padding: subSettings.bg === 'solid' ? '2px 10px' : '0',
-                          borderRadius: subSettings.bg === 'solid' ? '8px' : '0'
-                        }}
-                      >
-                        {line}
-                      </span>
-                    ))}
-                  </div>
-                ))
-              }
-            </div>
-          )}
-
-          {isRemoteStreaming && connMode === 'webrtc' && !remoteStream && (
-            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-none">
-              <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4 shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
-              <p className="text-white text-xl font-bold animate-pulse">{t.waitingForStream}</p>
-            </div>
-          )}
-
-          {duration > 0 && duration - currentTime <= 15 && !isRemoteStreaming && !isTV && !selectedMovie.video_path.startsWith("torrent-") && (sameCollectionMovies[0] || recommendedMovies[0]) && (
-             <div className="absolute bottom-32 right-10 z-[120] bg-black/80 border border-zinc-700 p-4 rounded-xl shadow-2xl backdrop-blur-md animate-in slide-in-from-right w-80">
-               <p className="text-zinc-400 text-[10px] font-bold mb-3 uppercase tracking-widest">{t.upNextStarting}</p>
-               <div className="flex gap-4">
-                 <div className="w-16 h-24 bg-zinc-800 rounded flex-shrink-0">
-                   <img src={(sameCollectionMovies[0] || recommendedMovies[0]).poster_url || ""} className="w-full h-full object-cover rounded"/>
-                 </div>
-                 <div className="flex flex-col justify-center w-full">
-                   <p className="text-white font-bold text-sm line-clamp-2">{(sameCollectionMovies[0] || recommendedMovies[0]).title}</p>
-                   
-                   <div className="w-full h-1 bg-zinc-700 mt-2 rounded overflow-hidden">
-                     <div className="h-full bg-red-600 transition-all duration-1000 ease-linear" style={{width: `${((15 - (duration - currentTime)) / 15) * 100}%`}}></div>
-                   </div>
-                   
-                   <p className="text-xs text-zinc-400 mt-1">{Math.ceil(duration - currentTime)} {t.secondsLeft}</p>
-
-                   <div className="flex gap-2 mt-2">
-                     <button onClick={(e) => {
-                       e.stopPropagation();
-                       closePlayer().then(() => setTimeout(() => startPlayer(sameCollectionMovies[0] || recommendedMovies[0]), 500));
-                     }} className="flex-1 text-xs bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 rounded transition">
-                       {t.openNowBtn}
-                     </button>
-                   </div>
-                   
-                   {Math.ceil(duration - currentTime) === 0 && (
-                     <img src="" onError={() => closePlayer().then(() => setTimeout(() => startPlayer(sameCollectionMovies[0] || recommendedMovies[0]), 500))} className="hidden" />
-                   )}
-                 </div>
-               </div>
-             </div>
-          )}
-
-          {currentTime > 10 && currentTime < 120 && !isRemoteStreaming && !isWeb && (
-             <button onClick={(e) => { e.stopPropagation(); handleSeekPlayer(currentTime + 85); }} className="absolute bottom-32 right-10 z-50 bg-black/60 border border-zinc-500 text-white font-bold px-6 py-3 rounded hover:bg-white hover:text-black transition-all hover:scale-105 shadow-2xl">
-               {t.skipIntro}
-             </button>
-          )}
-
-          <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-6 transition-opacity duration-300 ${showControls ? "opacity-100" : "opacity-0"}`}>
-            <button onClick={closePlayer} className="absolute bottom-[90vh] left-6 text-4xl text-white hover:text-red-500 transition drop-shadow-lg">✕</button>
-
-            {!isTV && partyStatus === 'connected' && (
-              <button onClick={(e) => {e.stopPropagation(); setIsChatOpen(!isChatOpen);}} className="absolute bottom-[90vh] right-6 flex items-center gap-2 bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded-full backdrop-blur transition shadow-xl border border-blue-500">
-                💬 {t.chatBtn} {unreadCount > 0 ? `(${unreadCount})` : ''}
-              </button>
-            )}
-
-            {isRemoteStreaming && (
-              <div className="absolute bottom-[90vh] right-[150px] bg-red-600 text-white text-xs font-bold px-3 py-2 rounded-full animate-pulse shadow-[0_0_15px_rgba(220,38,38,0.7)]">
-                {connMode === 'webrtc' ? t.liveStreamBadge : t.networkStreamBadge}
-              </div>
-            )}
-
-            <div className="flex items-center gap-4 mb-4">
-              <span 
-                className="text-sm font-medium w-16 text-center drop-shadow-md cursor-pointer hover:text-white transition select-none"
-                onClick={(e) => { e.stopPropagation(); setRuntimeFormat(prev => prev === 'min' ? 'hour' : 'min'); }}
-                title={t.timeFormatTitle}
-              >
-                {formatTime(currentTime)}
-              </span>
-              
-              <div 
-                className="relative w-full h-1.5 bg-zinc-700/80 backdrop-blur rounded-lg cursor-pointer group hover:h-2 transition-all"
-                onMouseMove={handleProgressMouseMove}
-                onMouseLeave={() => setHoverTime(null)}
-                onClick={(e) => { if(isRemoteStreaming) return; const rect = e.currentTarget.getBoundingClientRect(); const x = e.clientX - rect.left; handleSeekPlayer((x / rect.width) * duration); }}
-              >
-                <div className="absolute top-0 left-0 h-full bg-red-600 rounded-lg shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{width: `${(currentTime/duration)*100}%`}}></div>
-                {hoverTime !== null && !isRemoteStreaming && !isTV && (
-                  <div className="absolute bottom-6 -translate-x-1/2 bg-black border border-zinc-700 rounded overflow-hidden shadow-2xl z-50 flex flex-col items-center pointer-events-none" style={{ left: hoverX }}>
-                    <video ref={previewVideoRef} src={getSafeVideoSource()} className="w-40 h-[90px] object-cover" muted />
-                    <span className="text-xs font-bold p-1 bg-black/80 w-full text-center">{formatTime(hoverTime)}</span>
-                  </div>
-                )}
-              </div>
-              
-              <span 
-                className="text-sm font-medium text-zinc-400 w-16 text-center drop-shadow-md cursor-pointer hover:text-white transition select-none"
-                onClick={(e) => { e.stopPropagation(); setRuntimeFormat(prev => prev === 'min' ? 'hour' : 'min'); }}
-                title={t.timeFormatTitle}
-              >
-                {formatTime(duration)}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-6">
-                <button onClick={togglePlay} disabled={isRemoteStreaming && connMode === 'webrtc'} className={`text-4xl transition drop-shadow-lg ${isRemoteStreaming && connMode === 'webrtc' ? "opacity-50 cursor-not-allowed" : "hover:scale-110"}`}>{isVideoPlaying ? "⏸" : "▶"}</button>
-                <div className="flex items-center gap-2 group/vol relative drop-shadow-lg">
-                  <button onClick={toggleMute} className="text-2xl hover:text-white transition w-8 text-center text-zinc-300">{isMuted || volume === 0 ? "🔇" : volume < 0.5 ? "🔉" : "🔊"}</button>
-                  <input type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume} onChange={handleVolumeChangePlayer} className="w-0 opacity-0 group-hover/vol:w-20 group-hover/vol:opacity-100 transition-all duration-300 h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-white" />
-                </div>
-                <h2 className="text-xl font-bold truncate max-w-md ml-2 drop-shadow-md">{selectedMovie.title}</h2>
-              </div>
-
-              <div className="flex items-center gap-6 relative drop-shadow-lg">
-                <div className="relative">
-                  <button onClick={(e) => {e.stopPropagation(); setShowSpeedMenu(!showSpeedMenu); setShowSubMenu(false);}} className="text-base font-bold text-zinc-300 hover:text-white transition w-8">{playbackSpeed}x</button>
-                  {showSpeedMenu && (
-                    <div className="absolute bottom-12 right-0 w-24 bg-zinc-900 border border-zinc-700 rounded-lg overflow-hidden shadow-2xl z-50">
-                      {[0.5, 1, 1.25, 1.5, 2].map(rate => (
-                        <button key={rate} disabled={isRemoteStreaming && connMode === 'webrtc'} onClick={() => changePlaybackSpeed(rate)} className={`w-full text-center px-4 py-2 text-sm hover:bg-zinc-800 ${playbackSpeed === rate ? "text-red-500 font-bold" : "text-white"} ${isRemoteStreaming && connMode === 'webrtc' ? "opacity-50 cursor-not-allowed" : ""}`}>{rate}x</button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if(isWeb) { showToast(t.castNotSupportedWeb, "❌"); return; }
-                    showToast(t.scanningTvToast, "📺");
-                  }}
-                  className="text-2xl text-zinc-300 hover:text-white transition group/cast relative mt-1"
-                  title={t.castToTvTitle}
-                >
-                  <svg stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"></path><line x1="2" y1="20" x2="2.01" y2="20"></line>
-                  </svg>
-                </button>
-
-                <button 
-                  onClick={toggleVoiceBoost} 
-                  className={`text-xl font-bold transition group relative mt-1 ${isVoiceBoosted ? 'text-blue-500' : 'text-zinc-300 hover:text-white'}`}
-                  title={t.voiceBoostTitle}
-                >
-                  <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 24 24" height="1.2em" width="1.2em" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"></path>
-                  </svg>
-                  {isVoiceBoosted && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span></span>}
-                </button>
-
-                <button onClick={(e) => {e.stopPropagation(); setShowSubMenu(!showSubMenu); setShowSpeedMenu(false);}} className="text-xl font-bold text-zinc-300 hover:text-white">CC</button>
-
-                {!isTV && <button onClick={(e) => {e.stopPropagation(); toggleVirtualTheater(true);}} className="text-2xl text-zinc-300 hover:text-white transition" title={t.theaterModeBtn}>👓</button>}
-                {!isTV && <button onClick={togglePip} className="text-2xl text-zinc-300 hover:text-white transition" title="Small Window">◱</button>}
-                <button onClick={toggleFullscreen} className="text-2xl text-zinc-300 hover:text-white">⛶</button>
-                
-                {showSubMenu && (
-                  <div className="absolute bottom-12 right-0 w-72 bg-zinc-900 border border-zinc-700 rounded-lg overflow-hidden shadow-2xl z-50">
-                    <div className="bg-zinc-800 px-4 py-2 text-xs font-bold text-zinc-400 uppercase tracking-wider">{t.subs}</div>
-                    <button onClick={() => changeSubtitle(-1)} className={`w-full text-left px-4 py-2 text-sm hover:bg-zinc-800 ${activeSubIndex === -1 ? "text-red-500 font-bold" : "text-white"}`}>{t.subOff}</button>
-                    {localSubs.map((sub, idx) => (
-                      <div key={sub.id} className="flex items-center justify-between hover:bg-zinc-800 px-4 py-2">
-                        <button onClick={() => changeSubtitle(idx)} className={`flex-1 text-left text-sm ${activeSubIndex === idx ? "text-red-500 font-bold" : "text-white"}`}>{sub.label} {sub.offset !== 0 && <span className="text-xs text-zinc-400">({sub.offset > 0 ? '+':''}{sub.offset}s)</span>}</button>
-                        {activeSubIndex === idx && (
-                          <div className="flex items-center gap-1 bg-zinc-950 rounded p-1">
-                            <button onClick={(e) => {e.stopPropagation(); updateSubDelay(idx, -0.5)}} className="w-6 h-6 rounded flex items-center justify-center text-xs bg-zinc-800 hover:bg-zinc-700 text-white">-</button>
-                            <button onClick={(e) => {e.stopPropagation(); updateSubDelay(idx, 0.5)}} className="w-6 h-6 rounded flex items-center justify-center text-xs bg-zinc-800 hover:bg-zinc-700 text-white">+</button>
-                          </div>
-                        )}
-                        <button 
-    onClick={handleGenerateAISubtitle} 
-    disabled={isGeneratingSub}
-    className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-bold transition disabled:opacity-50"
-  >
-    {isGeneratingSub ? t.aiSubtitleGenerating : t.aiSubtitleGenerateBtn}
-  </button>
-                      </div>
-                      
-                    ))}
-                    
-                    {!isTV && (
-                      <>
-                        <div className="bg-zinc-800 px-4 py-2 mt-1 text-xs font-bold text-zinc-400 uppercase tracking-wider">{t.findFromInternet}</div>
-                        <div className="p-2">
-                          {osResults.length === 0 && !isSearchingOS && (
-                            <div className="flex gap-2">
-                              <button onClick={(e) => {e.stopPropagation(); searchStremioSubtitles('tur')}} className="flex-1 rounded bg-red-600/20 py-2 text-xs font-bold text-red-500 hover:bg-red-600/40 transition">{t.searchSubTr}</button>
-                              <button onClick={(e) => {e.stopPropagation(); searchStremioSubtitles('eng')}} className="flex-1 rounded bg-blue-600/20 py-2 text-xs font-bold text-blue-500 hover:bg-blue-600/40 transition">{t.searchSubEn}</button>
-                            </div>
-                          )}
-                          {isSearchingOS && <div className="text-center text-sm text-zinc-400 py-2">{t.searchingStremio}</div>}
-                          {osError && <div className="text-center text-xs text-red-500 py-2 font-bold bg-red-950/30 rounded mb-2">{osError}</div>}
-                          {osResults.map((res: any) => {
-                            const isDownloading = downloadingId === res.id;
-                            return (
-                              <button key={res.id} disabled={isDownloading} onClick={(e) => {e.stopPropagation(); downloadStremioSubtitle(res)}} className={`w-full text-left px-2 py-2 text-xs text-zinc-300 hover:bg-zinc-800 rounded truncate ${isDownloading ? 'opacity-50' : ''}`}>
-                                {isDownloading ? t.downloading : `⬇ Stremio [${res.lang}] - ${t.stremioFileLabel}`}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* "BANA FİLM BUL" SİHİRBAZI MODALI */}
+      {/* "BANA FİLM BUL" SİHİRBAZI VE HIZLI YOUTUBE MODALI */}
       {isWizardOpen && (
         <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/90 backdrop-blur-md px-4 animate-in fade-in zoom-in-95">
           <div className="w-full max-w-2xl rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 relative">
             <button onClick={() => setIsWizardOpen(false)} className="absolute top-6 right-6 text-2xl text-zinc-500 hover:text-white transition">✕</button>
             <h2 className="text-3xl font-bold mb-2 flex items-center gap-3">{t.wizardHeading}</h2>
             <p className="text-zinc-400 mb-8">{t.wizardDesc}</p>
+
+            <div className="mb-8 border-b border-zinc-800 pb-8">
+              <h3 className="text-sm font-bold text-red-500 mb-2 uppercase tracking-wider">🎥 YouTube Party Watch</h3>
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  placeholder="YouTube Video Linkini Yapıştır (Örn: https://youtu.be/...)" 
+                  value={ytInput} 
+                  onChange={(e) => setYtInput(e.target.value)} 
+                  className="flex-1 rounded-lg border border-zinc-700 bg-black px-4 py-3 text-white outline-none focus:border-red-500 transition" 
+                />
+                <button 
+                  onClick={playYouTubeVideo} 
+                  className="rounded-lg bg-red-600 px-6 font-bold hover:bg-red-700 transition flex items-center gap-2"
+                >
+                  Oynat ▶
+                </button>
+              </div>
+            </div>
 
             {!wizardResult && !isWizardSpinning && (
               <div className="space-y-6">
@@ -1845,23 +1780,579 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
           
         </div>
       )}
-      {/* --- 3D SANAL SİNEMA MODU BURAYA GELECEK --- */}
-      {isVirtualTheaterOpen && videoRef.current && (
-        <VirtualTheater
-          videoElement={videoRef.current}
-          onClose={() => toggleVirtualTheater(false)}
-          activeSubIndex={activeSubIndex}
-          localSubs={localSubs}
-          currentTime={currentTime}
-          duration={duration}
-          subSettings={subSettings}
-          isVideoPlaying={isVideoPlaying}
-          onTogglePlay={togglePlay}
-          onSeek={handleSeekPlayer}
-          formatTime={formatTime}
-          companionName={theaterCompanionName}
-          t={t}
-        />
+
+      {/* İSTATİSTİKLER MODALI */}
+      {isStatsOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4 animate-in fade-in zoom-in-95">
+          <div className="w-full max-w-lg rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 relative overflow-hidden">
+            <div className="absolute -top-20 -right-20 w-64 h-64 bg-red-600/20 rounded-full blur-3xl pointer-events-none"></div>
+            <div className="mb-8 flex items-center justify-between relative z-10">
+              <h2 className="text-3xl font-extrabold text-white">{t.statsTitle}</h2>
+              <button onClick={() => setIsStatsOpen(false)} className="text-3xl text-zinc-500 hover:text-white transition">✕</button>
+            </div>
+            <div className="grid grid-cols-2 gap-4 relative z-10">
+              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 text-center shadow-lg">
+                <p className="text-4xl font-black text-white">{userStats.watchedCount}</p>
+                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">{t.statsWatched}</p>
+              </div>
+              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 text-center shadow-lg">
+                <p className="text-4xl font-black text-red-500">{userStats.hours}s</p>
+                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">{t.statsTime}</p>
+              </div>
+              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 text-center shadow-lg col-span-2">
+                <p className="text-3xl font-black text-white truncate px-2">{userStats.favGenre}</p>
+                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">{t.statsFavGenre}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SOHBET VE LOBİ PENCERESİ AÇMA BUTONU */}
+      {!isTV && partyStatus === 'connected' && !isPlaying && (
+        <button onClick={() => setIsChatOpen(!isChatOpen)} className="fixed bottom-8 right-8 z-[150] flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 shadow-2xl hover:scale-110 transition-transform text-2xl relative">
+          💬
+          {unreadCount > 0 && (
+            <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full shadow-lg border border-red-900 animate-bounce">
+              {unreadCount}
+            </span>
+          )}
+        </button>
+      )}
+
+      {/* SOHBET VE LOBİ PENCERESİ EKRANI */}
+      {!isTV && isChatOpen && partyStatus === 'connected' && (
+        <div className="fixed right-0 top-0 bottom-0 w-80 bg-zinc-950 border-l border-zinc-800 z-[250] flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
+          <div className="p-4 bg-zinc-900 border-b border-zinc-800 flex justify-between items-center shadow-md">
+            <h3 className="font-bold text-white flex items-center gap-2">{t.partyLobbyHeading} <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span></h3>
+            
+            <div className="flex gap-2">
+              <button onClick={toggleFaceCam} className={`flex items-center justify-center w-8 h-8 rounded-full transition ${isCamActive ? 'bg-blue-500 hover:bg-blue-600 animate-pulse' : 'bg-zinc-700 hover:bg-zinc-600'}`} title="Kamerayı Aç">
+                {isCamActive ? '📸' : '📷'}
+              </button>
+              <button onClick={toggleVoiceChat} className={`flex items-center justify-center w-8 h-8 rounded-full transition ${isMicActive ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-zinc-700 hover:bg-zinc-600'}`}>
+                {isMicActive ? '🎙️' : '🎤'}
+              </button>
+            </div>
+            
+            <button onClick={() => setIsChatOpen(false)} className="text-zinc-400 hover:text-white transition ml-2">✕</button>
+          </div>
+          
+          <div className="bg-zinc-950 p-3 border-b border-zinc-800">
+            <p className="text-xs text-zinc-500 font-bold mb-2 uppercase">{t.whoIsInRoom}</p>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-sm text-yellow-400 font-bold">
+                👑 {isHostRef.current ? (profiles.find(p => p.id === activeProfile)?.name || t.youHostFallback) : hostName}
+              </div>
+              
+              {isHostRef.current ? (
+                connectedGuests.length > 0 ? (
+                  connectedGuests.map((guest, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm text-zinc-300 pl-4 border-l-2 border-zinc-700">
+                      👤 {guest.name}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-xs text-zinc-600 italic pl-4">{t.nobodyJoinedYet}</div>
+                )
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-zinc-300 pl-4 border-l-2 border-zinc-700">
+                   👤 {guestName || localStorage.getItem("kinflix_guest_name") || t.youFallback}
+                </div>
+              )}
+            </div>
+          </div>
+          
+          <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-zinc-950">
+            {chatMessages.map(msg => (
+              <div key={msg.id} className={`relative group max-w-[85%] rounded-xl p-2.5 text-sm shadow-md ${msg.sender === 'me' ? 'bg-blue-600 text-white self-end rounded-tr-sm' : 'bg-zinc-800 text-zinc-200 self-start rounded-tl-sm'}`}>
+                {msg.author && (
+                  <span className={`text-[10px] font-bold block mb-1 opacity-80 ${msg.sender === 'me' ? 'text-blue-200 text-right' : 'text-zinc-400 text-left'}`}>
+                    {msg.author}
+                  </span>
+                )}
+                {msg.type === 'text' ? <p className="break-words">{msg.content}</p> : <img src={msg.content} className="rounded-lg w-full object-cover cursor-pointer hover:opacity-80 transition" onClick={async () => { if(!isWeb) { const { openUrl } = await import('@tauri-apps/plugin-opener'); openUrl(msg.content); } else { window.open(msg.content); } }} />}
+                
+                {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                  <div className="flex gap-1 mt-1.5 flex-wrap">
+                    {Object.entries(msg.reactions).map(([emo, count]) => (
+                      <span key={emo} className={`text-xs rounded-full px-1.5 py-0.5 border ${msg.sender === 'me' ? 'bg-blue-700 border-blue-500' : 'bg-zinc-700 border-zinc-600'}`}>
+                        {emo} <span className="opacity-70">{count}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <span className="text-[10px] opacity-50 block mt-1 text-right">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                
+                <div className={`absolute -top-4 ${msg.sender === 'me' ? 'left-0' : 'right-0'} hidden group-hover:flex bg-zinc-800 border border-zinc-700 rounded-full shadow-xl p-1 gap-1 z-50`}>
+                  {['👍', '❤️', '😂', '😲'].map(emo => (
+                     <button key={emo} onClick={() => sendReaction(msg.id, emo)} className="hover:scale-125 transition px-1">{emo}</button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <div className="bg-zinc-900 border-t border-zinc-800 flex flex-col">
+            <div className="flex gap-3 px-4 pt-2 pb-1 text-xl justify-center border-b border-zinc-800/50 bg-black/20">
+              {['😀', '😂', '❤️', '🔥', '👍', '😲'].map(emo => (
+                <button 
+                  key={emo} 
+                  onClick={() => {
+                     spawnFloatingEmoji(emo);
+                     if (partyStatus === 'connected') broadcastEvent("floating_emoji", { emoji: emo });
+                  }} 
+                  className="hover:scale-125 transition drop-shadow-md"
+                >
+                  {emo}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 items-center p-3">
+              <label className="cursor-pointer text-xl hover:scale-110 transition text-zinc-400 hover:text-white">
+                📷 <input type="file" className="hidden" accept="image/*" onChange={handleSendChatImage} />
+              </label>
+              <input type="text" className="flex-1 bg-black border border-zinc-800 rounded-full px-4 py-2 text-sm text-white outline-none focus:border-blue-500 transition" placeholder={t.chatMsg} value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChatText()} />
+              <button onClick={handleSendChatText} className="text-blue-500 font-bold px-2 hover:text-blue-400 transition">➤</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FACECAM BUBBLE (GÖRÜNTÜLÜ SOHBET) EKRANI */}
+      {(isCamActive || remoteCamRef.current?.srcObject) && (
+        <div className="fixed top-24 right-8 z-[150] flex flex-col gap-4 pointer-events-none">
+          {remoteCamRef.current?.srcObject && (
+            <div className="w-32 h-32 md:w-48 md:h-48 bg-zinc-900 rounded-full border-2 border-red-500 overflow-hidden shadow-2xl animate-in zoom-in">
+               <video ref={remoteCamRef} autoPlay playsInline className="w-full h-full object-cover" />
+            </div>
+          )}
+          {isCamActive && (
+            <div className="w-32 h-32 md:w-48 md:h-48 bg-zinc-900 rounded-full border-2 border-blue-500 overflow-hidden shadow-2xl animate-in zoom-in">
+               <video ref={localCamRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ANA VİDEO OYNATICI ARAYÜZÜ */}
+      {isPlaying && selectedMovie && (
+        <div 
+          ref={playerContainerRef} 
+          onMouseMove={handleMouseMove} 
+          onClick={() => {if(showSubMenu) setShowSubMenu(false); if(showSpeedMenu) setShowSpeedMenu(false);}} 
+          onDoubleClick={handlePlayerDoubleClick}
+          onWheel={handlePlayerWheel}
+          className={`fixed inset-0 z-[100] bg-black flex flex-col group ${showControls ? "controls-visible" : "controls-hidden"}`}
+        >
+          {/* 3D SİNEMA VE YOUTUBE İFRAME YÖNETİMİ */}
+          {isVirtualTheaterOpen ? (
+             <VirtualTheater 
+               videoElement={videoRef.current} 
+               onClose={() => toggleVirtualTheater(false)} 
+               activeSubIndex={activeSubIndex} 
+               localSubs={localSubs} 
+               currentTime={currentTime} 
+               duration={duration} 
+               subSettings={subSettings} 
+               isVideoPlaying={isVideoPlaying} 
+               onTogglePlay={togglePlay} 
+               onSeek={handleSeekPlayer} 
+               formatTime={formatTime} 
+               companionName={theaterCompanionName}
+               theme={theaterTheme}
+               t={t} 
+             />
+          ) : selectedMovie.video_path.startsWith('yt-') ? (
+             <div className="absolute inset-0 w-full h-full bg-black z-0 flex items-center justify-center">
+                <iframe
+                   src={`https://www.youtube.com/embed/${selectedMovie.video_path.split('-')[1]}?autoplay=1&enablejsapi=1&controls=1`}
+                   className="w-full h-full"
+                   frameBorder="0"
+                   allow="autoplay; fullscreen"
+                />
+             </div>
+          ) : null}
+
+          {/* ASIL VİDEO OYNATICI */}
+          <video
+            ref={videoRef} 
+            crossOrigin="anonymous" 
+            src={getSafeVideoSource()} 
+            autoPlay 
+            playsInline
+            onClick={togglePlay}
+            onTimeUpdate={(e) => { 
+              if (isRemoteStreaming && !isHostRef.current) return;
+              const cTime = e.currentTarget.currentTime + transcodeOffsetRef.current;
+              setCurrentTime(cTime);
+
+              // YENİ: Otomatik İntro Atlama Mantığı
+              if (autoSkipIntro && cTime > 10 && cTime < 12 && !isRemoteStreaming && !isWeb && !selectedMovieRef.current?.video_path.startsWith("yt-")) {
+                 handleSeekPlayer(cTime + 85);
+                 showToast("İntro otomatik atlandı!", "⏭️");
+              }
+
+              if (isHostRef.current && partyStatusRef.current === 'connected') {
+                if (Math.floor(cTime) !== lastSyncTimeRef.current) {
+                  lastSyncTimeRef.current = Math.floor(cTime);
+                  const safeDuration = (e.currentTarget.duration && e.currentTarget.duration !== Infinity) 
+                    ? e.currentTarget.duration 
+                    : ((selectedMovieRef.current?.runtime || 120) * 60);
+                  broadcastEvent("sync_time", { time: cTime, duration: safeDuration });
+                }
+              }
+            }}
+            onLoadedMetadata={(e) => { 
+              if (isRemoteStreaming && !isHostRef.current) return;
+              const actualDuration = (e.currentTarget.duration && e.currentTarget.duration > 0 && e.currentTarget.duration !== Infinity) 
+                 ? e.currentTarget.duration 
+                 : (selectedMovieRef.current?.runtime || 120) * 60;
+              setDuration(actualDuration); 
+              
+              if ((selectedMovie.progress || 0) > 0 && !isWeb && !isRemoteStreaming && !selectedMovie.video_path.startsWith("torrent-")) {
+                if (transcodeOffsetRef.current === 0) {
+                  e.currentTarget.currentTime = selectedMovie.progress!;
+                }
+              }
+            }}
+            className="h-full w-full object-contain cursor-pointer absolute inset-0"
+            style={{ 
+              opacity: (isVirtualTheaterOpen || selectedMovie.video_path.startsWith('yt-')) ? '0.01' : '1',
+              filter: `brightness(${videoFilters.brightness}) contrast(${videoFilters.contrast}) saturate(${videoFilters.saturation})`
+            }}
+          />
+
+          {/* ALTYAZILAR */}
+          {activeSubIndex >= 0 && localSubs[activeSubIndex] && !selectedMovie.video_path.startsWith('yt-') && (
+            <div className={`absolute left-0 right-0 z-[100000] flex flex-col items-center justify-end pointer-events-none transition-all duration-300 ${showControls ? 'bottom-32' : 'bottom-12'}`}>
+              {localSubs[activeSubIndex].cues
+                .filter(c => currentTime >= c.start && currentTime <= c.end)
+                .map((c, i) => (
+                  <div key={i} className="text-center mb-1">
+                    {c.text.split('\n').map((line, j) => (
+                      <div 
+                        key={j} 
+                        className={`inline-block font-bold leading-tight ${subSettings.color} pointer-events-auto`} 
+                        style={{ 
+                          fontSize: subSettings.size,
+                          textShadow: subSettings.bg === 'text-shadow' ? '0px 0px 6px black, 0px 0px 12px black' : 'none',
+                          backgroundColor: subSettings.bg === 'solid' ? 'rgba(0,0,0,0.8)' : 'transparent',
+                          padding: subSettings.bg === 'solid' ? '2px 10px' : '0',
+                          borderRadius: subSettings.bg === 'solid' ? '8px' : '0'
+                        }}
+                        onMouseLeave={() => setHoveredWord(null)}
+                      >
+                        {line.split(' ').map((word, k) => (
+                          <span 
+                            key={k} 
+                            onMouseEnter={(e) => handleWordHover(word, e)}
+                            className="cursor-help hover:text-yellow-400 transition"
+                          >
+                            {word}{" "}
+                          </span>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ))
+              }
+            </div>
+          )}
+
+          {isRemoteStreaming && connMode === 'webrtc' && !remoteStream && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-none">
+              <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4 shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
+              <p className="text-white text-xl font-bold animate-pulse">{t.waitingForStream}</p>
+            </div>
+          )}
+
+          {/* SIRADAKİ FİLM UI */}
+          {duration > 0 && duration - currentTime <= 15 && !isRemoteStreaming && !isTV && !selectedMovie.video_path.startsWith("torrent-") && !selectedMovie.video_path.startsWith("yt-") && (sameCollectionMovies[0] || recommendedMovies[0]) && (
+             <div className="absolute bottom-32 right-10 z-[100000] bg-black/80 border border-zinc-700 p-4 rounded-xl shadow-2xl backdrop-blur-md animate-in slide-in-from-right w-80">
+               <p className="text-zinc-400 text-[10px] font-bold mb-3 uppercase tracking-widest">{t.upNextStarting}</p>
+               <div className="flex gap-4">
+                 <div className="w-16 h-24 bg-zinc-800 rounded flex-shrink-0">
+                   <img src={(sameCollectionMovies[0] || recommendedMovies[0]).poster_url || ""} className="w-full h-full object-cover rounded"/>
+                 </div>
+                 <div className="flex flex-col justify-center w-full">
+                   <p className="text-white font-bold text-sm line-clamp-2">{(sameCollectionMovies[0] || recommendedMovies[0]).title}</p>
+                   
+                   <div className="w-full h-1 bg-zinc-700 mt-2 rounded overflow-hidden">
+                     <div className="h-full bg-red-600 transition-all duration-1000 ease-linear" style={{width: `${((15 - (duration - currentTime)) / 15) * 100}%`}}></div>
+                   </div>
+                   
+                   <p className="text-xs text-zinc-400 mt-1">{Math.ceil(duration - currentTime)} {t.secondsLeft}</p>
+
+                   <div className="flex gap-2 mt-2">
+                     <button onClick={(e) => { 
+                       e.stopPropagation(); 
+                       closePlayer().then(() => setTimeout(() => startPlayer(sameCollectionMovies[0] || recommendedMovies[0]), 500)); 
+                     }} className="flex-1 text-xs bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 rounded transition">
+                       {t.openNowBtn}
+                     </button>
+                   </div>
+                 </div>
+               </div>
+             </div>
+          )}
+
+          {currentTime > 10 && currentTime < 120 && !isRemoteStreaming && !isWeb && !selectedMovie.video_path.startsWith("yt-") && (
+             <div className="absolute bottom-32 right-10 z-[100000] flex flex-col items-end gap-2 animate-in slide-in-from-right">
+               <button onClick={(e) => { e.stopPropagation(); handleSeekPlayer(currentTime + 85); }} className="bg-black/80 border border-zinc-500 text-white font-bold px-6 py-3 rounded hover:bg-white hover:text-black transition-all hover:scale-105 shadow-2xl backdrop-blur">
+                 ⏭️ {t.skipIntro || "İntroyu Atla"}
+               </button>
+               <label className="flex items-center gap-2 bg-black/60 px-3 py-1.5 rounded border border-zinc-700 cursor-pointer text-xs text-zinc-300 hover:text-white transition backdrop-blur shadow-lg">
+                 <input 
+                   type="checkbox" 
+                   checked={autoSkipIntro} 
+                   onChange={(e) => { 
+                     setAutoSkipIntro(e.target.checked); 
+                     localStorage.setItem("kinflix_auto_skip", String(e.target.checked)); 
+                     if(e.target.checked) showToast("İntrolar artık otomatik atlanacak", "✅");
+                   }} 
+                   className="accent-white cursor-pointer"
+                 />
+                 Otomatik Atla
+               </label>
+             </div>
+          )}
+
+          {/* VİDEO KONTROL ÇUBUĞU */}
+          <div className={`absolute bottom-0 left-0 right-0 z-[100000] bg-gradient-to-t from-black/90 via-black/40 to-transparent p-6 transition-opacity duration-300 ${showControls ? "opacity-100" : "opacity-0"}`}>
+            <button onClick={closePlayer} className="absolute bottom-[90vh] left-6 text-4xl text-white hover:text-red-500 transition drop-shadow-lg">✕</button>
+
+            {!isTV && partyStatus === 'connected' && (
+              <button onClick={(e) => {e.stopPropagation(); setIsChatOpen(!isChatOpen);}} className="absolute bottom-[90vh] right-6 flex items-center gap-2 bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded-full backdrop-blur transition shadow-xl border border-blue-500">
+                💬 {t.chatBtn} {unreadCount > 0 ? `(${unreadCount})` : ''}
+              </button>
+            )}
+
+            {isRemoteStreaming && (
+              <div className="absolute bottom-[90vh] right-[150px] bg-red-600 text-white text-xs font-bold px-3 py-2 rounded-full animate-pulse shadow-[0_0_15px_rgba(220,38,38,0.7)]">
+                {connMode === 'webrtc' ? t.liveStreamBadge : t.networkStreamBadge}
+              </div>
+            )}
+
+            <div className="flex items-center gap-4 mb-4">
+              <span 
+                className="text-sm font-medium w-16 text-center drop-shadow-md cursor-pointer hover:text-white transition select-none"
+                onClick={(e) => { e.stopPropagation(); setRuntimeFormat(prev => prev === 'min' ? 'hour' : 'min'); }}
+              >
+                {formatTime(currentTime)}
+              </span>
+              
+              <div 
+                className="relative w-full h-1.5 bg-zinc-700/80 backdrop-blur rounded-lg cursor-pointer group hover:h-2 transition-all"
+                onMouseMove={handleProgressMouseMove}
+                onMouseLeave={() => setHoverTime(null)}
+                onClick={(e) => { if(isRemoteStreaming && connMode === 'webrtc' && !isHost) return; const rect = e.currentTarget.getBoundingClientRect(); const x = e.clientX - rect.left; handleSeekPlayer((x / rect.width) * duration); }}
+              >
+                <div className="absolute top-0 left-0 h-full bg-red-600 rounded-lg shadow-[0_0_10px_rgba(220,38,38,0.8)]" style={{width: `${(currentTime/duration)*100}%`}}></div>
+                {hoverTime !== null && !isRemoteStreaming && !isTV && !selectedMovie.video_path.startsWith('yt-') && (
+                  <div className="absolute bottom-6 -translate-x-1/2 bg-black border border-zinc-700 rounded overflow-hidden shadow-2xl z-50 flex flex-col items-center pointer-events-none" style={{ left: hoverX }}>
+                    <video ref={previewVideoRef} src={getSafeVideoSource()} className="w-40 h-[90px] object-cover" muted />
+                    <span className="text-xs font-bold p-1 bg-black/80 w-full text-center">{formatTime(hoverTime)}</span>
+                  </div>
+                )}
+              </div>
+              
+              <span 
+                className="text-sm font-medium text-zinc-400 w-16 text-center drop-shadow-md cursor-pointer hover:text-white transition select-none"
+              >
+                {formatTime(duration)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <button onClick={togglePlay} disabled={isRemoteStreaming && connMode === 'webrtc' && !isHost} className={`text-4xl transition drop-shadow-lg ${isRemoteStreaming && connMode === 'webrtc' && !isHost ? "opacity-50 cursor-not-allowed" : "hover:scale-110"}`}>{isVideoPlaying ? "⏸" : "▶"}</button>
+                <div className="flex items-center gap-2 group/vol relative drop-shadow-lg">
+                  <button onClick={toggleMute} className="text-2xl hover:text-white transition w-8 text-center text-zinc-300">{isMuted || volume === 0 ? "🔇" : volume < 0.5 ? "🔉" : "🔊"}</button>
+                  <input type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume} onChange={handleVolumeChangePlayer} className="w-0 opacity-0 group-hover/vol:w-20 group-hover/vol:opacity-100 transition-all duration-300 h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-white" />
+                </div>
+                <h2 className="text-xl font-bold truncate max-w-md ml-2 drop-shadow-md">{selectedMovie.title}</h2>
+              </div>
+
+              <div className="flex items-center gap-6 relative drop-shadow-lg">
+                
+                {/* YENİ: GERÇEK SAAT GÖSTERGESİ */}
+                <span className="text-zinc-400 font-mono text-sm tracking-wider mr-2 hidden md:block">
+                  🕒 {realTime}
+                </span>
+
+                {isVirtualTheaterOpen && (
+                   <select 
+                     value={theaterTheme}
+                     onChange={(e: any) => {
+                        setTheaterTheme(e.target.value);
+                        if (partyStatus === 'connected') broadcastEvent('change_theme', { theme: e.target.value });
+                     }}
+                     className="bg-black/50 border border-zinc-500 rounded px-2 py-1 text-sm font-bold outline-none hover:border-white transition"
+                   >
+                     <option value="vip">Tema: VIP Salon</option>
+                     <option value="space">Tema: Uzay Boşluğu</option>
+                     <option value="retro">Tema: 90'lar Retro</option>
+                   </select>
+                )}
+
+                <div className="relative">
+                  <button onClick={(e) => {e.stopPropagation(); setShowSpeedMenu(!showSpeedMenu); setShowSubMenu(false);}} className="text-base font-bold text-zinc-300 hover:text-white transition w-8">{playbackSpeed}x</button>
+                  {showSpeedMenu && (
+                    <div className="absolute bottom-12 right-0 w-24 bg-zinc-900 border border-zinc-700 rounded-lg overflow-hidden shadow-2xl z-50">
+                      {[0.5, 1, 1.25, 1.5, 2].map(rate => (
+                        <button key={rate} disabled={isRemoteStreaming && connMode === 'webrtc' && !isHost} onClick={() => changePlaybackSpeed(rate)} className={`w-full text-center px-4 py-2 text-sm hover:bg-zinc-800 ${playbackSpeed === rate ? "text-red-500 font-bold" : "text-white"} ${isRemoteStreaming && connMode === 'webrtc' && !isHost ? "opacity-50 cursor-not-allowed" : ""}`}>{rate}x</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <button 
+                  onClick={toggleVoiceBoost} 
+                  className={`text-xl font-bold transition group relative mt-1 ${isVoiceBoosted ? 'text-blue-500' : 'text-zinc-300 hover:text-white'}`}
+                  title={t.voiceBoostTitle}
+                >
+                  <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 24 24" height="1.2em" width="1.2em" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"></path>
+                  </svg>
+                  {isVoiceBoosted && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span></span>}
+                </button>
+
+                <button onClick={(e) => {e.stopPropagation(); takeScreenshot();}} className="text-xl font-bold text-zinc-300 hover:text-white transition hover:scale-110" title="Ekran Görüntüsü Al">📸</button>
+
+                <button onClick={(e) => {e.stopPropagation(); setShowVideoSettings(!showVideoSettings); setShowSubMenu(false); setShowSpeedMenu(false);}} className="text-xl font-bold text-zinc-300 hover:text-white transition" title="Görüntü Ayarları">🎨</button>
+                
+                {/* YENİ: Video Görüntü Ayarları Menüsü */}
+                {showVideoSettings && (
+                  <div className="absolute bottom-12 right-12 w-64 bg-zinc-900 border border-zinc-700 rounded-lg p-4 shadow-2xl z-50 flex flex-col gap-4">
+                    <div className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">Görüntü Ayarları</div>
+                    <div>
+                      <div className="flex justify-between text-xs text-zinc-400 mb-1"><span>Parlaklık</span> <span>{videoFilters.brightness}x</span></div>
+                      <input type="range" min="0.1" max="3" step="0.1" value={videoFilters.brightness} onChange={(e) => setVideoFilters({...videoFilters, brightness: parseFloat(e.target.value)})} className="w-full accent-white" />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-xs text-zinc-400 mb-1"><span>Kontrast</span> <span>{videoFilters.contrast}x</span></div>
+                      <input type="range" min="0.1" max="3" step="0.1" value={videoFilters.contrast} onChange={(e) => setVideoFilters({...videoFilters, contrast: parseFloat(e.target.value)})} className="w-full accent-white" />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-xs text-zinc-400 mb-1"><span>Doygunluk</span> <span>{videoFilters.saturation}x</span></div>
+                      <input type="range" min="0" max="3" step="0.1" value={videoFilters.saturation} onChange={(e) => setVideoFilters({...videoFilters, saturation: parseFloat(e.target.value)})} className="w-full accent-white" />
+                    </div>
+                    <button onClick={() => setVideoFilters({brightness: 1, contrast: 1, saturation: 1})} className="text-xs font-bold bg-zinc-800 hover:bg-zinc-700 text-white py-2 rounded mt-2">Sıfırla</button>
+                  </div>
+                )}
+
+                <button onClick={(e) => {e.stopPropagation(); setShowSubMenu(!showSubMenu); setShowSpeedMenu(false); setShowVideoSettings(false);}} className="text-xl font-bold text-zinc-300 hover:text-white">CC</button>
+                
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleVirtualTheater(!isVirtualTheaterOpen);
+                  }}
+                  className={`text-2xl transition mt-1 ${isVirtualTheaterOpen ? 'text-purple-500 hover:text-purple-400' : 'text-zinc-300 hover:text-white'}`}
+                  title={t.theaterModeBtn}
+                >
+                  👓
+                </button>
+
+                {!isTV && <button onClick={togglePip} className="text-2xl text-zinc-300 hover:text-white transition" title="Small Window">◱</button>}
+                <button onClick={toggleFullscreen} className="text-2xl text-zinc-300 hover:text-white">⛶</button>
+                
+                {/* CC (ALTYAZI) MENÜSÜ İÇİNDEKİ STREMİO/Aİ KISMI GERİ GELDİ */}
+                {showSubMenu && (
+                  <div className="absolute bottom-12 right-0 w-72 bg-zinc-900 border border-zinc-700 rounded-lg overflow-hidden shadow-2xl z-50">
+                    <div className="bg-zinc-800 px-4 py-2 text-xs font-bold text-zinc-400 uppercase tracking-wider">{t.subs}</div>
+                    <button onClick={() => changeSubtitle(-1)} className={`w-full text-left px-4 py-2 text-sm hover:bg-zinc-800 ${activeSubIndex === -1 ? "text-red-500 font-bold" : "text-white"}`}>{t.subOff}</button>
+                    {localSubs.map((sub, idx) => (
+                      <div key={sub.id} className="flex items-center justify-between hover:bg-zinc-800 px-4 py-2">
+                        <button onClick={() => changeSubtitle(idx)} className={`flex-1 text-left text-sm ${activeSubIndex === idx ? "text-red-500 font-bold" : "text-white"}`}>{sub.label} {sub.offset !== 0 && <span className="text-xs text-zinc-400">({sub.offset > 0 ? '+':''}{sub.offset}s)</span>}</button>
+                        {activeSubIndex === idx && (
+                          <div className="flex items-center gap-1 bg-zinc-950 rounded p-1">
+                            <button onClick={(e) => {e.stopPropagation(); updateSubDelay(idx, -0.5)}} className="w-6 h-6 rounded flex items-center justify-center text-xs bg-zinc-800 hover:bg-zinc-700 text-white">-</button>
+                            <button onClick={(e) => {e.stopPropagation(); updateSubDelay(idx, 0.5)}} className="w-6 h-6 rounded flex items-center justify-center text-xs bg-zinc-800 hover:bg-zinc-700 text-white">+</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {!isTV && (
+                      <>
+                        <div className="bg-zinc-800 px-4 py-2 mt-1 text-xs font-bold text-zinc-400 uppercase tracking-wider">{t.findFromInternet}</div>
+                        <div className="p-2">
+                          
+                          <div className="flex gap-2 mb-2">
+                            <select 
+                               value={subSearchLang} 
+                               onChange={(e) => setSubSearchLang(e.target.value)}
+                               onClick={(e) => e.stopPropagation()}
+                               className="bg-zinc-950 border border-zinc-700 text-xs text-zinc-300 rounded p-1.5 flex-1 outline-none cursor-pointer"
+                            >
+                               <option value="tur">Türkçe</option>
+                               <option value="eng">İngilizce</option>
+                               <option value="spa">İspanyolca</option>
+                               <option value="fre">Fransızca</option>
+                               <option value="ger">Almanca</option>
+                               <option value="all">Tüm Diller</option>
+                            </select>
+                            <input 
+                               type="text" 
+                               value={subSearchQuery}
+                               onChange={(e) => setSubSearchQuery(e.target.value)}
+                               placeholder="Farklı ara (isim / tt0000000)"
+                               className="bg-zinc-950 border border-zinc-700 text-xs text-zinc-300 rounded p-1.5 flex-[2] outline-none"
+                               onClick={(e) => e.stopPropagation()}
+                               onKeyDown={(e) => e.stopPropagation()}
+                            />
+                          </div>
+
+                          {osResults.length === 0 && !isSearchingOS && (
+                            <button onClick={(e) => {e.stopPropagation(); searchStremioSubtitles(subSearchLang, subSearchQuery)}} className="w-full rounded bg-blue-600/20 py-2 text-xs font-bold text-blue-500 hover:bg-blue-600/40 transition mb-2">🔍 İnternette Ara</button>
+                          )}
+                          
+                          <button 
+                            onClick={handleGenerateAISubtitle} 
+                            disabled={isGeneratingSub}
+                            className="flex items-center justify-center gap-2 w-full bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 mb-2 rounded font-bold text-xs transition disabled:opacity-50"
+                          >
+                            {isGeneratingSub ? "⏳ Dinleniyor..." : "🤖 AI ile Üret"}
+                          </button>
+                          
+                          {isSearchingOS && <div className="text-center text-sm text-zinc-400 py-2">{t.searchingStremio}</div>}
+                          {osError && <div className="text-center text-xs text-red-500 py-2 font-bold bg-red-950/30 rounded mb-2">{osError}</div>}
+                          
+                          {osResults.length > 0 && <button onClick={(e) => {e.stopPropagation(); setOsResults([]); setSubSearchQuery("");}} className="w-full text-center text-[10px] text-zinc-500 hover:text-white mb-1">Sonuçları Gizle</button>}
+                          
+                          <div className="max-h-40 overflow-y-auto custom-scrollbar">
+                            {osResults.map((res: any) => {
+                              const isDownloading = downloadingId === res.id;
+                              return (
+                                <button key={res.id} disabled={isDownloading} onClick={(e) => {e.stopPropagation(); downloadStremioSubtitle(res)}} className={`w-full text-left px-2 py-2 text-xs text-zinc-300 hover:bg-zinc-800 rounded truncate ${isDownloading ? 'opacity-50' : ''}`} title={res.id}>
+                                  {isDownloading ? "⏳ İndiriliyor..." : `⬇ [${res.lang.toUpperCase()}] ${res.id}`}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* YENİ: Altyazı Çeviri Tooltipi */}
+      {hoveredWord && (
+        <div 
+          className="fixed z-[999999] bg-black/90 text-white px-4 py-2 rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] border border-zinc-700 pointer-events-none transform -translate-x-1/2 -translate-y-[120%] flex flex-col items-center animate-in fade-in zoom-in-95 duration-200"
+          style={{ left: hoveredWord.x, top: hoveredWord.y }}
+        >
+          <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mb-1 border-b border-zinc-700 pb-1 w-full text-center">{hoveredWord.word}</span>
+          <span className={`text-base font-bold whitespace-nowrap ${hoveredWord.loading ? 'animate-pulse text-yellow-500' : 'text-white'}`}>{hoveredWord.translation}</span>
+          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-black/90 border-b border-r border-zinc-700 rotate-45"></div>
+        </div>
       )}
     </div>
   );
