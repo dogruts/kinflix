@@ -15,6 +15,7 @@ export default function FourthWallEngine({
     let intervalId: ReturnType<typeof setInterval>;
     let timeoutId: ReturnType<typeof setTimeout>;
 
+    let overlayElement: HTMLDivElement | null = null;
     const g = genre.toLowerCase();
 
     if (g.includes("sci-fi") || g.includes("hacker") || g.includes("action") || g.includes("bilim kurgu")) {
@@ -37,17 +38,20 @@ export default function FourthWallEngine({
       // KORKU EFEKTİ
       intervalId = setInterval(() => {
         if (Math.random() < 0.05) { // %5 ihtimalle
-          const overlay = document.createElement("div");
-          overlay.style.position = "fixed";
-          overlay.style.inset = "0";
-          overlay.style.backgroundColor = "rgba(255, 0, 0, 0.1)";
-          overlay.style.zIndex = "999999";
-          overlay.style.pointerEvents = "none";
-          overlay.style.boxShadow = "inset 0 0 100px rgba(255,0,0,0.5)";
-          document.body.appendChild(overlay);
+          overlayElement = document.createElement("div");
+          overlayElement.style.position = "fixed";
+          overlayElement.style.inset = "0";
+          overlayElement.style.backgroundColor = "rgba(255, 0, 0, 0.1)";
+          overlayElement.style.zIndex = "999999";
+          overlayElement.style.pointerEvents = "none";
+          overlayElement.style.boxShadow = "inset 0 0 100px rgba(255,0,0,0.5)";
+          document.body.appendChild(overlayElement);
           
           timeoutId = setTimeout(() => {
-            overlay.remove();
+            if (overlayElement) {
+              overlayElement.remove();
+              overlayElement = null;
+            }
           }, 300);
         }
       }, 15000);
@@ -56,6 +60,7 @@ export default function FourthWallEngine({
     return () => {
       clearInterval(intervalId);
       clearTimeout(timeoutId);
+      if (overlayElement) overlayElement.remove();
       const appDiv = document.getElementById("kinflix-app-root");
       if (appDiv) {
         appDiv.style.filter = "none";

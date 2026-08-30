@@ -65,6 +65,7 @@ export interface UsePartyParams {
   setShowNameModal: Dispatch<SetStateAction<boolean>>;
   setIsMicActive: Dispatch<SetStateAction<boolean>>;
   _setRemoteStream: Dispatch<SetStateAction<MediaStream | null>>;
+  setRemoteScreenStream?: React.Dispatch<React.SetStateAction<MediaStream | null>>;
 
   showToast: (text: string, icon?: string) => void;
   onRemoteTheaterChange: (open: boolean) => void;
@@ -81,7 +82,7 @@ export function useParty(p: UsePartyParams) {
     setCurrentTime, setDuration, setLocalSubs, setActiveSubIndex, setPlaybackSpeed,
     setChatMessages, setUnreadCount, setChatInput, setIsHost, setPartyStatus, setConnMode,
     setTargetAddress, setPeerId, setConnectedGuests, setIsPartyMenuOpen, setShowNameModal,
-    setIsMicActive, _setRemoteStream, showToast, onRemoteTheaterChange, t,
+    setIsMicActive, _setRemoteStream, showToast, onRemoteTheaterChange, setRemoteScreenStream, t,
   } = p;
 
   const disconnectParty = () => {
@@ -176,9 +177,37 @@ export function useParty(p: UsePartyParams) {
           const call = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'voice_chat' } });
           voiceCallRef.current = call;
         }
-      } catch (err) { alert(t.micDenied); }
-    }
-  };
+        } catch (err) { alert(t.micDenied); }
+      }
+    };
+
+    let localScreenStream: MediaStream | null = null;
+    let screenCall: MediaConnection | null = null;
+
+    const toggleScreenShare = async () => {
+      if (localScreenStream) {
+        localScreenStream.getTracks().forEach(t => t.stop());
+        localScreenStream = null;
+        if (screenCall) screenCall.close();
+        screenCall = null;
+        broadcastEvent("screenshare_closed");
+      } else {
+        try {
+          const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+          localScreenStream = stream;
+          if (connRef.current && peerRef.current) {
+            screenCall = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'screenshare' } });
+          }
+          
+          stream.getVideoTracks()[0].onended = () => {
+             localScreenStream = null;
+             if (screenCall) screenCall.close();
+             screenCall = null;
+             broadcastEvent("screenshare_closed");
+          };
+        } catch (err) { console.error("Ekran paylaşılamadı:", err); }
+      }
+    };
 
   useEffect(() => {
     networkHandlerRef.current = async (data: any) => {
@@ -274,6 +303,7 @@ export function useParty(p: UsePartyParams) {
         });
       }
       else if (data.action === "voice_chat_closed") { if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null; }
+      else if (data.action === "screenshare_closed") { if (setRemoteScreenStream) setRemoteScreenStream(null); }
       else if (data.action === "sync_subs" && !hostMode) {
         const guestSubs = data.subs.map((sub: any) => {
            return { ...sub, cues: parseSrtToCues(sub.srtContent, sub.offset) };
@@ -534,6 +564,6 @@ export function useParty(p: UsePartyParams) {
 
   return {
     disconnectParty, connectParty, connectPeerJS, connectWebSocket, initPeerHost,
-    broadcastEvent, saveChatMessage, handleSendChatText, handleSendChatImage, sendReaction, toggleVoiceChat,
+    broadcastEvent, saveChatMessage, handleSendChatText, handleSendChatImage, sendReaction, toggleVoiceChat, toggleScreenShare,
   };
 }

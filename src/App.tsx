@@ -11,7 +11,9 @@ import ClipperModal from "./components/ClipperModal";
 import SoundtrackRadar from "./components/SoundtrackRadar";
 import SocialTimeMachine from "./components/SocialTimeMachine";
 import FourthWallEngine from "./components/FourthWallEngine";
+import BrainRotOverlay from "./components/BrainRotOverlay";
 import { useAudioReactiveSubs } from "./hooks/useAudioReactiveSubs";
+import { useVoiceControl } from "./hooks/useVoiceControl";
 
 import { isTV, isWeb } from "./utils/platform";
 import { shuffleArray, generateLocalShortCode, normalizePath } from "./utils/helpers";
@@ -212,11 +214,14 @@ function App() {
   // DENEYSEL ÖZELLİKLER (Experimental)
   const [expSocial, setExpSocial] = useState(false);
   const [expFourthWall, setExpFourthWall] = useState(false);
+  const [expBrainRot, setExpBrainRot] = useState(false);
+  const [expVoiceControl, setExpVoiceControl] = useState(false);
   const [expLUT, setExpLUT] = useState("none");
   
   const [isPartyMenuOpen, setIsPartyMenuOpen] = useState(isWeb); 
   const [peerId, setPeerId] = useState<string>(""); 
   const [localIp, setLocalIp] = useState<string>(""); 
+  const [remoteScreenStream, setRemoteScreenStream] = useState<MediaStream | null>(null); 
   const [targetAddress, setTargetAddress] = useState(""); 
   const [partyStatus, setPartyStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [connMode, setConnMode] = useState<"none" | "webrtc" | "ip">("none");
@@ -302,6 +307,8 @@ function App() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 3000);
   };
+
+  useVoiceControl({ isActive: expVoiceControl, videoRef, showToast });
 
   useEffect(() => {
     const timer = setTimeout(() => setShowIntro(false), 2500);
@@ -806,7 +813,7 @@ function App() {
 
   const {
     disconnectParty, connectParty, connectWebSocket, initPeerHost,
-    broadcastEvent, handleSendChatText, handleSendChatImage, sendReaction, toggleVoiceChat,
+    broadcastEvent, handleSendChatText, handleSendChatImage, sendReaction, toggleVoiceChat, toggleScreenShare
   } = useParty({
     peerRef, connRef, wsRef, voiceCallRef, networkHandlerRef, localMicStreamRef, remoteAudioRef,
     videoRef, transcodeOffsetRef, moviesRef, selectedMovieRef, localSubsRef, activeSubIndexRef,
@@ -818,6 +825,7 @@ function App() {
     setTargetAddress, setPeerId, setConnectedGuests, setIsPartyMenuOpen, setShowNameModal,
     setIsMicActive, _setRemoteStream, showToast, t,
     onRemoteTheaterChange: (open) => setIsVirtualTheaterOpen(open),
+    setRemoteScreenStream
   });
 
   const {
@@ -1905,6 +1913,9 @@ function App() {
             <h3 className="font-bold text-white flex items-center gap-2">{t.partyLobbyHeading} <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span></h3>
             
             <div className="flex gap-2">
+              <button onClick={toggleScreenShare} className="flex items-center justify-center w-8 h-8 rounded-full transition bg-zinc-700 hover:bg-zinc-600" title="Ekranı Paylaş">
+                💻
+              </button>
               <button onClick={toggleFaceCam} className={`flex items-center justify-center w-8 h-8 rounded-full transition ${isCamActive ? 'bg-blue-500 hover:bg-blue-600 animate-pulse' : 'bg-zinc-700 hover:bg-zinc-600'}`} title="Kamerayı Aç">
                 {isCamActive ? '📸' : '📷'}
               </button>
@@ -2121,6 +2132,15 @@ function App() {
             }}
           />
 
+          {remoteScreenStream && (
+            <video 
+              ref={(el) => { if (el) { el.srcObject = remoteScreenStream; el.play().catch(()=>{}); } }}
+              autoPlay 
+              playsInline 
+              className="absolute inset-0 w-full h-full object-contain bg-black z-[90]"
+            />
+          )}
+
           <XRayOverlay videoRef={videoRef} tmdbId={selectedMovie?.tmdb_id || null} title={selectedMovie?.title} year={selectedMovie?.year} isPaused={!isPlaying && showControls} />
           <TriviaGame 
             broadcastEvent={(action, payload) => {
@@ -2136,6 +2156,7 @@ function App() {
 
           <SocialTimeMachine isActive={expSocial} currentTime={currentTime} duration={duration} />
           <FourthWallEngine isActive={expFourthWall} isPlaying={isVideoPlaying} genre={selectedMovie?.genres || ''} />
+          <BrainRotOverlay isActive={expBrainRot} />
 
           {/* ALTYAZILAR */}
           {activeSubIndex >= 0 && localSubs[activeSubIndex] && !selectedMovie.video_path.startsWith('yt-') && (
@@ -2412,6 +2433,18 @@ function App() {
                           <div className={`w-3 h-3 bg-white rounded-full transition-transform ${expSocial ? 'translate-x-5' : 'translate-x-0'}`}></div>
                         </div>
                         <span className="text-xs font-bold text-zinc-300 group-hover:text-white transition">Sosyal Zaman Makinesi</span>
+                      </label>
+                      <label onClick={() => setExpBrainRot(!expBrainRot)} className="flex items-center gap-2 cursor-pointer group mt-2">
+                        <div className={`w-10 h-5 rounded-full p-1 transition-colors ${expBrainRot ? 'bg-purple-500' : 'bg-zinc-700'}`}>
+                          <div className={`w-3 h-3 bg-white rounded-full transition-transform ${expBrainRot ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                        </div>
+                        <span className="text-xs font-bold text-zinc-300 group-hover:text-white transition">🧠 Gen-Z Modu</span>
+                      </label>
+                      <label onClick={() => setExpVoiceControl(!expVoiceControl)} className="flex items-center gap-2 cursor-pointer group mt-2">
+                        <div className={`w-10 h-5 rounded-full p-1 transition-colors ${expVoiceControl ? 'bg-purple-500' : 'bg-zinc-700'}`}>
+                          <div className={`w-3 h-3 bg-white rounded-full transition-transform ${expVoiceControl ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                        </div>
+                        <span className="text-xs font-bold text-zinc-300 group-hover:text-white transition">🎤 Sesli Komut (Jarvis)</span>
                       </label>
 
                       <div>
