@@ -649,6 +649,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
     setChatMessages, setUnreadCount, setChatInput, setIsHost, setPartyStatus, setConnMode,
     setTargetAddress, setPeerId, setConnectedGuests, setIsPartyMenuOpen, setShowNameModal,
     setIsMicActive, _setRemoteStream, showToast,
+    onRemoteTheaterChange: (open) => setIsVirtualTheaterOpen(open),
   });
 
   const {
@@ -672,6 +673,15 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
   });
 
   useEffect(() => { startPlayerRef.current = startPlayer; }, [startPlayer]);
+
+  const toggleVirtualTheater = (open: boolean) => {
+    setIsVirtualTheaterOpen(open);
+    if (partyStatus === 'connected') broadcastEvent(open ? "enter_theater" : "exit_theater");
+  };
+
+  const theaterCompanionName = partyStatus === 'connected'
+    ? (isHost ? connectedGuests[0]?.name : hostName)
+    : undefined;
 
   return (
     <div className="min-h-screen bg-[#0b0b0b] text-white relative flex flex-col overflow-hidden">
@@ -1204,10 +1214,10 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
               </button>
 
               {/* 3D SİNEMA MODU BUTONU BURAYA GELECEK */}
-              <button 
+              <button
                 onClick={() => {
                   startPlayer(); // Önce filmi normal oynatıcıda başlatıyoruz (videoRef oluşsun diye)
-                  setTimeout(() => setIsVirtualTheaterOpen(true), 800); // 800ms sonra 3D salonu açıyoruz
+                  setTimeout(() => toggleVirtualTheater(true), 800); // 800ms sonra 3D salonu açıyoruz
                 }}
                 className="flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border bg-purple-600/20 border-purple-500/50 hover:bg-purple-600/40 hover:border-purple-400"
               >
@@ -1641,7 +1651,8 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 </button>
 
                 <button onClick={(e) => {e.stopPropagation(); setShowSubMenu(!showSubMenu); setShowSpeedMenu(false);}} className="text-xl font-bold text-zinc-300 hover:text-white">CC</button>
-                
+
+                {!isTV && <button onClick={(e) => {e.stopPropagation(); toggleVirtualTheater(true);}} className="text-2xl text-zinc-300 hover:text-white transition" title="👓 3D Sinema Modu">👓</button>}
                 {!isTV && <button onClick={togglePip} className="text-2xl text-zinc-300 hover:text-white transition" title="Small Window">◱</button>}
                 <button onClick={toggleFullscreen} className="text-2xl text-zinc-300 hover:text-white">⛶</button>
                 
@@ -1836,9 +1847,19 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
       )}
       {/* --- 3D SANAL SİNEMA MODU BURAYA GELECEK --- */}
       {isVirtualTheaterOpen && videoRef.current && (
-        <VirtualTheater 
-          videoElement={videoRef.current} 
-          onClose={() => setIsVirtualTheaterOpen(false)} 
+        <VirtualTheater
+          videoElement={videoRef.current}
+          onClose={() => toggleVirtualTheater(false)}
+          activeSubIndex={activeSubIndex}
+          localSubs={localSubs}
+          currentTime={currentTime}
+          duration={duration}
+          subSettings={subSettings}
+          isVideoPlaying={isVideoPlaying}
+          onTogglePlay={togglePlay}
+          onSeek={handleSeekPlayer}
+          formatTime={formatTime}
+          companionName={theaterCompanionName}
         />
       )}
     </div>

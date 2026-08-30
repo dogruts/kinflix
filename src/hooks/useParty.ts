@@ -67,6 +67,7 @@ export interface UsePartyParams {
   _setRemoteStream: Dispatch<SetStateAction<MediaStream | null>>;
 
   showToast: (text: string, icon?: string) => void;
+  onRemoteTheaterChange: (open: boolean) => void;
 }
 
 export function useParty(p: UsePartyParams) {
@@ -79,7 +80,7 @@ export function useParty(p: UsePartyParams) {
     setCurrentTime, setDuration, setLocalSubs, setActiveSubIndex, setPlaybackSpeed,
     setChatMessages, setUnreadCount, setChatInput, setIsHost, setPartyStatus, setConnMode,
     setTargetAddress, setPeerId, setConnectedGuests, setIsPartyMenuOpen, setShowNameModal,
-    setIsMicActive, _setRemoteStream, showToast,
+    setIsMicActive, _setRemoteStream, showToast, onRemoteTheaterChange,
   } = p;
 
   const disconnectParty = () => {
@@ -276,6 +277,8 @@ export function useParty(p: UsePartyParams) {
         setLocalSubs(guestSubs); setActiveSubIndex(data.activeIndex);
       }
       else if (data.action === "change_sub_index" && !hostMode) { setActiveSubIndex(data.activeIndex); }
+      else if (data.action === "enter_theater") { onRemoteTheaterChange(true); }
+      else if (data.action === "exit_theater") { onRemoteTheaterChange(false); }
 
       // DÜZELTME 1: Misafir de oynatma hızını değiştirebilsin diye !hostMode kısıtlaması kalktı
       else if (data.action === "rate_change") {
