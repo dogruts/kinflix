@@ -68,6 +68,7 @@ export interface UsePartyParams {
 
   showToast: (text: string, icon?: string) => void;
   onRemoteTheaterChange: (open: boolean) => void;
+  t: Record<string, string>;
 }
 
 export function useParty(p: UsePartyParams) {
@@ -80,7 +81,7 @@ export function useParty(p: UsePartyParams) {
     setCurrentTime, setDuration, setLocalSubs, setActiveSubIndex, setPlaybackSpeed,
     setChatMessages, setUnreadCount, setChatInput, setIsHost, setPartyStatus, setConnMode,
     setTargetAddress, setPeerId, setConnectedGuests, setIsPartyMenuOpen, setShowNameModal,
-    setIsMicActive, _setRemoteStream, showToast, onRemoteTheaterChange,
+    setIsMicActive, _setRemoteStream, showToast, onRemoteTheaterChange, t,
   } = p;
 
   const disconnectParty = () => {
@@ -175,7 +176,7 @@ export function useParty(p: UsePartyParams) {
           const call = peerRef.current.call(connRef.current.peer, stream, { metadata: { type: 'voice_chat' } });
           voiceCallRef.current = call;
         }
-      } catch (err) { alert("Mikrofon erişimi reddedildi veya bulunamadı."); }
+      } catch (err) { alert(t.micDenied); }
     }
   };
 
@@ -201,9 +202,9 @@ export function useParty(p: UsePartyParams) {
               if (!prev.find(g => g.name === data.guestName)) return [...prev, {id: Date.now().toString(), name: data.guestName}];
               return prev;
            });
-           showToast(`${data.guestName} odaya bağlandı!`, "👋");
+           showToast(`${data.guestName} ${t.guestJoinedSuffix}`, "👋");
         } else {
-           showToast("Bir misafir odaya bağlandı!", "👋");
+           showToast(t.guestJoinedGeneric, "👋");
         }
 
         const activeProfileName = profiles.find(p => p.id === activeProfile)?.name || "Host";
@@ -240,7 +241,7 @@ export function useParty(p: UsePartyParams) {
         setIsRemoteStreaming(true);
       }
       else if (data.action === "left_movie" && hostMode) {
-        showToast("Misafir oynatıcıyı kapattı.", "🛑");
+        showToast(t.guestClosedPlayer, "🛑");
       }
       else if (data.action === "sync_time" && !hostMode) {
         // HOST'UN SÜRESİNİ ZORLA KABUL ET (Böylece bar asla taşmaz!)
@@ -337,7 +338,7 @@ export function useParty(p: UsePartyParams) {
       if (partyStatusRef.current === 'connecting') {
         console.log("Bağlantı zaman aşımı.");
         disconnectParty();
-        alert("❌ Odaya bağlanılamadı! Host uygulamayı kapatmış, kod değişmiş veya internet WebRTC'yi engelliyor olabilir.\nAynı evdeyseniz TV Kısa Kodunu kullanın.");
+        alert(t.connectFailedAlert);
       }
     }, 15000);
 
@@ -366,7 +367,7 @@ export function useParty(p: UsePartyParams) {
       connectWebSocket(cleanTarget);
     } else {
       disconnectParty();
-      alert("Geçersiz 6 haneli kod veya IP adresi girdiniz.");
+      alert(t.invalidCodeAlert);
     }
   };
 
@@ -474,7 +475,7 @@ export function useParty(p: UsePartyParams) {
       }
       if (err.type === 'peer-unavailable' || err.type === 'network') {
         disconnectParty();
-        alert("❌ Hata: Karşı taraf bulunamadı veya kod geçersiz!");
+        alert(t.peerNotFoundAlert);
       }
     });
 
@@ -486,7 +487,7 @@ export function useParty(p: UsePartyParams) {
       connRef.current = conn;
 
       conn.on('close', () => {
-        if (isHostRef.current) showToast("Misafir odadan ayrıldı.", "🚪");
+        if (isHostRef.current) showToast(t.guestLeftToast, "🚪");
       });
 
       if (!isWeb) {

@@ -83,6 +83,7 @@ export interface UsePlayerParams {
   toggleWatchlist: (movie: Movie) => Promise<void>;
   broadcastEvent: (action: string, payload?: any) => void;
   showToast: (text: string, icon?: string) => void;
+  t: Record<string, string>;
 }
 
 export function usePlayer(p: UsePlayerParams) {
@@ -98,7 +99,7 @@ export function usePlayer(p: UsePlayerParams) {
     setLocalSubs, setOsResults, setIsSearchingOS, setDownloadingId, setOsError, setIsVoiceBoosted,
     setConvertingMoviePath, setConvertProgress, setIsConverting, setIsGeneratingSub, setSelectedMovie,
     setIsRemoteStreaming, setMovies,
-    toggleWatchlist, broadcastEvent, showToast,
+    toggleWatchlist, broadcastEvent, showToast, t,
   } = p;
 
   const togglePlay = (e?: any) => {
@@ -161,38 +162,38 @@ export function usePlayer(p: UsePlayerParams) {
         sourceNodeRef.current.connect(compressorRef.current);
         compressorRef.current.connect(audioCtxRef.current.destination);
         setIsVoiceBoosted(true);
-        showToast("Ses Güçlendirici: AÇIK 🔉", "🚀");
+        showToast(t.voiceBoostOnToast, "🚀");
       } else {
         sourceNodeRef.current.disconnect();
         compressorRef.current.disconnect();
         sourceNodeRef.current.connect(audioCtxRef.current.destination);
         setIsVoiceBoosted(false);
-        showToast("Ses Güçlendirici: KAPALI", "🔇");
+        showToast(t.voiceBoostOffToast, "🔇");
       }
     } catch (error) {
       console.error("Web Audio API Hatası:", error);
-      showToast("Ses güçlendirici bu videoda desteklenmiyor.", "❌");
+      showToast(t.voiceBoostUnsupported, "❌");
     }
   };
 
   const handleGenerateAISubtitle = async () => {
     if (!selectedMovie) return;
     setIsGeneratingSub(true);
-    showToast("Yapay Zeka filmi dinlemeye başladı...", "🤖");
+    showToast(t.aiListeningToast, "🤖");
 
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const srtPath = await invoke('generate_ai_subtitle', { video_path: selectedMovie.video_path });
 
-      showToast("Altyazı başarıyla üretildi!", "✅");
+      showToast(t.aiSubtitleSuccessToast, "✅");
 
       const srtText = await invoke<string>('read_text_file', { path: srtPath });
 
       const newSub = {
          id: "ai_sub_" + Date.now().toString(),
          url: srtPath as string,
-         label: "🤖 AI Üretimi",
-         lang: "AI Üretimi",
+         label: `🤖 ${t.aiGeneratedLabel}`,
+         lang: t.aiGeneratedLabel,
          path: srtPath as string,
          srtContent: srtText,
          offset: 0,
@@ -203,7 +204,7 @@ export function usePlayer(p: UsePlayerParams) {
       setActiveSubIndex(localSubs.length);
 
     } catch (err: any) {
-      showToast("Hata: " + err, "❌");
+      showToast(t.genericErrorPrefix + err, "❌");
     } finally {
       setIsGeneratingSub(false);
     }
@@ -222,7 +223,7 @@ export function usePlayer(p: UsePlayerParams) {
 
           if (event.payload.progress >= 100) {
             setConvertingMoviePath(null);
-            showToast("Çeviri Tamamlandı! Artık oynatabilirsiniz.", "✅");
+            showToast(t.convertCompleteToast, "✅");
           }
         });
       } catch (e) {
@@ -318,11 +319,11 @@ export function usePlayer(p: UsePlayerParams) {
     setIsConverting(true);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      alert("Dönüştürme başladı. Bu işlem bilgisayarının hızına göre 10-20 dakika sürebilir. Arka planda devam ediyor.");
+      alert(t.convertStartAlert);
       const newPath = await invoke<string>("convert_to_x264", { videoPath: selectedMovie.video_path });
-      alert(`✅ Çeviri Tamamlandı!\nYeni Dosya: ${newPath}\nKütüphaneyi yeniden tara (Klasör ekler gibi aynı klasörü tekrar seç).`);
+      alert(`${t.convertDonePrefix}${newPath}${t.convertDoneSuffix}`);
     } catch (err) {
-      alert("❌ Hata: " + err);
+      alert(t.convertErrorAlert + err);
     } finally {
       setIsConverting(false);
     }
@@ -363,7 +364,7 @@ export function usePlayer(p: UsePlayerParams) {
         const match = selectedMovie.year ? metaData.metas.find((m:any) => m.year == selectedMovie.year) || metaData.metas[0] : metaData.metas[0];
         imdbId = match.imdb_id || match.id;
       }
-      if (!imdbId) { setOsError(`Bulunamadı.`); setIsSearchingOS(false); return; }
+      if (!imdbId) { setOsError(t.movieNotFoundOnCinemeta); setIsSearchingOS(false); return; }
 
       const subRes = await fetch(`https://opensubtitles-v3.strem.io/subtitles/movie/${imdbId}.json`);
       if(!subRes.ok) throw new Error("Addon çöktü");
@@ -371,10 +372,10 @@ export function usePlayer(p: UsePlayerParams) {
 
       if (subData.subtitles && subData.subtitles.length > 0) {
         const filtered = subData.subtitles.filter((s:any) => s.lang === targetLang);
-        if(filtered.length === 0) { setOsError(`Altyazı bulunamadı.`); setOsResults([]); }
+        if(filtered.length === 0) { setOsError(t.subNotFound); setOsResults([]); }
         else { setOsResults(filtered.slice(0, 10)); }
-      } else { setOsError("Altyazı bulunamadı."); }
-    } catch (err: any) { setOsError(`Bağlantı Hatası`); }
+      } else { setOsError(t.subNotFound); }
+    } catch (err: any) { setOsError(t.connError); }
     setIsSearchingOS(false);
   };
 
@@ -394,7 +395,7 @@ export function usePlayer(p: UsePlayerParams) {
             content: content,
             lang: sub.lang
           });
-          showToast("Altyazı filme kaydedildi!", "💾");
+          showToast(t.subtitleSavedToast, "💾");
         } catch(e) { console.error("Kayıt hatası", e); }
       }
 
@@ -406,19 +407,19 @@ export function usePlayer(p: UsePlayerParams) {
         return newSubs;
       });
       setOsResults([]);
-    } catch (err) { setOsError("Altyazı indirilemedi."); } finally { setDownloadingId(null); }
+    } catch (err) { setOsError(t.subtitleDownloadFailed); } finally { setDownloadingId(null); }
   };
 
   const streamYtsMovie = (ytsMovie: any) => {
     if (!ytsMovie.torrents || ytsMovie.torrents.length === 0) {
-      showToast("Bu film için uygun kaynak bulunamadı.", "❌");
+      showToast(t.noSourceForTorrent, "❌");
       return;
     }
 
-    const bestTorrent = ytsMovie.torrents.find((t: any) => t.quality === "1080p") || ytsMovie.torrents[0];
+    const bestTorrent = ytsMovie.torrents.find((tor: any) => tor.quality === "1080p") || ytsMovie.torrents[0];
     const magnetURI = `magnet:?xt=urn:btih:${bestTorrent.hash}&dn=${encodeURIComponent(ytsMovie.title)}&tr=udp://open.demonii.com:1337/announce&tr=udp://tracker.openbittorrent.com:80`;
 
-    showToast("Korsan ağa bağlanılıyor, eşler aranıyor...", "🏴‍☠️");
+    showToast(t.connectingToPeers, "🏴‍☠️");
 
     const fakeMovie: Movie = {
       video_path: `torrent-${ytsMovie.id}`,
@@ -439,7 +440,7 @@ export function usePlayer(p: UsePlayerParams) {
 
     if (torrentClient.current) {
       torrentClient.current.add(magnetURI, (torrent: any) => {
-        showToast("Bağlantı kuruldu, video yükleniyor...", "⚡");
+        showToast(t.connectionEstablishedToast, "⚡");
         const file = torrent.files.find((f: any) => f.name.endsWith('.mp4'));
         if (file && videoRef.current) {
           file.renderTo(videoRef.current);
@@ -453,7 +454,7 @@ export function usePlayer(p: UsePlayerParams) {
     if (!movieToPlay) return;
 
     if (!isHostRef.current && partyStatusRef.current === 'connected' && connModeRef.current === 'webrtc') {
-      showToast("WebRTC modunda filmi sadece Oda Kurucusu değiştirebilir. HTTP/IP modunda özgürce izleyebilirsiniz.", "⚠️");
+      showToast(t.webrtcOnlyHostAlert, "⚠️");
       return;
     }
 
@@ -471,7 +472,7 @@ export function usePlayer(p: UsePlayerParams) {
         for (let i = 0; i < srtFiles.length; i++) {
           const path = srtFiles[i];
           const content = await invoke<string>("read_text_file", { path });
-          const fileName = path.split(/[/\\]/).pop() || `Yerel Altyazı ${i + 1}`;
+          const fileName = path.split(/[/\\]/).pop() || `${t.localSubtitleLabel} ${i + 1}`;
           const label = `📂 ${fileName.replace(/\.srt$/i, '')}`;
           subs.push({ id: `local_${i}`, url: "", label, srtContent: content, offset: 0, cues: parseSrtToCues(content, 0) });
         }
@@ -494,7 +495,7 @@ export function usePlayer(p: UsePlayerParams) {
 
            const isHevcFile = /265|hevc/i.test(movieToPlay.video_path);
            if (isHevcFile) {
-             const useScreenShare = window.confirm("Bu film H265 (HEVC) formatında!\n\nTAMAM: Ekranı Paylaş (Siyah ekran sorununu çözer)\nİPTAL: Normal devam et");
+             const useScreenShare = window.confirm(t.hevcConfirmDialog);
              if (useScreenShare) {
                try {
                  const stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: "browser" }, audio: { suppressLocalAudioPlayback: false } } as any);
@@ -528,7 +529,7 @@ export function usePlayer(p: UsePlayerParams) {
 
     if (selectedMovie?.video_path.startsWith("torrent-")) {
       if (torrentClient.current) {
-         torrentClient.current.torrents.forEach((t: any) => t.destroy());
+         torrentClient.current.torrents.forEach((tor: any) => tor.destroy());
       }
     }
 
@@ -543,7 +544,7 @@ export function usePlayer(p: UsePlayerParams) {
 
       if (isCompleted && selectedMovie.watchlist) {
         await toggleWatchlist(selectedMovie);
-        showToast("Film bitti, listeden çıkarıldı.", "✅");
+        showToast(t.watchlistRemovedToast, "✅");
       }
 
       setSelectedMovie(prev => prev ? { ...prev, progress: timeToSave, is_watched: newIsWatched, watch_count: newWatchCount } : null);

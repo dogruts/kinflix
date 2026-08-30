@@ -17,11 +17,12 @@ interface VirtualTheaterProps {
   onSeek: (time: number) => void;
   formatTime: (time: number) => string;
   companionName?: string;
+  t: { exitTheaterBtn: string; theaterLookAroundHint: string };
 }
 
 export default function VirtualTheater({
   videoElement, onClose, activeSubIndex, localSubs, currentTime, duration, subSettings,
-  isVideoPlaying, onTogglePlay, onSeek, formatTime, companionName,
+  isVideoPlaying, onTogglePlay, onSeek, formatTime, companionName, t,
 }: VirtualTheaterProps) {
   const mountRef = useRef<HTMLDivElement>(null);
 
@@ -293,10 +294,10 @@ export default function VirtualTheater({
           onClick={(e) => { e.stopPropagation(); onClose(); }}
           className="absolute top-8 left-8 bg-zinc-900/80 border border-zinc-700 text-white px-6 py-2 rounded-full font-bold hover:bg-red-600 transition shadow-2xl pointer-events-auto cursor-pointer"
         >
-          🚪 Salondan Çık
+          {t.exitTheaterBtn}
         </button>
         <div className="absolute bottom-8 right-8 text-zinc-500 text-xs font-mono bg-black/50 p-2 rounded pointer-events-none">
-          Etrafına bakmak için tıkla ve sürükle
+          {t.theaterLookAroundHint}
         </div>
 
         {/* ALTYAZI OVERLAY */}

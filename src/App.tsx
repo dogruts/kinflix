@@ -98,7 +98,7 @@ function App() {
       else if (wizardFilters.rating === "mid") filtered = filtered.filter(m => (m.rating || 0) >= 6.0);
 
       if (filtered.length === 0) {
-        showToast("Kütüphanede bu kriterlere uygun film yok!", "❌");
+        showToast(t.noMoviesMatch, "❌");
         setIsWizardSpinning(false);
         return;
       }
@@ -234,7 +234,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
     const newLikes = { ...likedMovies, [path]: val };
     setLikedMovies(newLikes);
     localStorage.setItem("kinflix_likes", JSON.stringify(newLikes));
-    showToast(val === 1 ? "Film türleri favorilerine eklendi 👍" : "Bu tarz filmler daha az önerilecek 👎", "🎯");
+    showToast(val === 1 ? t.likedGenreToast : t.dislikedGenreToast, "🎯");
   };
   
   const showToast = (text: string, icon: string = "🔔") => {
@@ -424,7 +424,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             console.warn(`${url} engelli, diğerine geçiliyor...`);
           }
         }
-        showToast(lang === 'tr' ? "YTS sunucularına ulaşılamadı. VPN deneyin." : "YTS servers unreachable. Try VPN.", "🚫");
+        showToast(t.ytsUnreachable, "🚫");
       };
 
       fetchYts().finally(() => setIsFetchingYts(false));
@@ -527,7 +527,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
       await updateInfo.downloadAndInstall();
       const { relaunch } = await import('@tauri-apps/plugin-process');
       await relaunch();
-    } catch (err) { alert("Güncelleme yüklenemedi: " + err); setIsUpdating(false); }
+    } catch (err) { alert(t.updateInstallFailed + err); setIsUpdating(false); }
   };
 
   const handleSaveLang = async (val: Lang) => { 
@@ -609,7 +609,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
         }
       }
       setMovies(await getMovies(activeProfile || "default"));
-      showToast(`✅ Yeni filmler eşitlendi! Başarılı: ${successCount}`, "🚀");
+      showToast(`${t.syncSuccessMsg} ${successCount}`, "🚀");
     } catch (error) { setError(String(error)); } finally { setSyncing(false); }
   }
 
@@ -648,7 +648,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
     setCurrentTime, setDuration, setLocalSubs, setActiveSubIndex, setPlaybackSpeed,
     setChatMessages, setUnreadCount, setChatInput, setIsHost, setPartyStatus, setConnMode,
     setTargetAddress, setPeerId, setConnectedGuests, setIsPartyMenuOpen, setShowNameModal,
-    setIsMicActive, _setRemoteStream, showToast,
+    setIsMicActive, _setRemoteStream, showToast, t,
     onRemoteTheaterChange: (open) => setIsVirtualTheaterOpen(open),
   });
 
@@ -669,7 +669,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
     setLocalSubs, setOsResults, setIsSearchingOS, setDownloadingId, setOsError, setIsVoiceBoosted,
     setConvertingMoviePath, setConvertProgress, setIsConverting, setIsGeneratingSub, setSelectedMovie,
     setIsRemoteStreaming, setMovies,
-    toggleWatchlist, broadcastEvent, showToast,
+    toggleWatchlist, broadcastEvent, showToast, t,
   });
 
   useEffect(() => { startPlayerRef.current = startPlayer; }, [startPlayer]);
@@ -707,7 +707,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
       {/* Kim İzliyor Ekranı */}
       {!activeProfile && (!isWeb || isHost) && (
         <div className="fixed inset-0 z-[5000] bg-[#141414] flex flex-col items-center justify-center animate-in fade-in duration-500">
-          <h1 className="text-4xl md:text-5xl font-medium text-white mb-10 tracking-wider text-center">Kim İzliyor?</h1>
+          <h1 className="text-4xl md:text-5xl font-medium text-white mb-10 tracking-wider text-center">{t.whoIsWatching}</h1>
           <div className="flex flex-wrap justify-center gap-4 md:gap-8 items-start px-4">
             {profiles.map(p => (
               <div key={p.id} className="flex flex-col items-center gap-4 cursor-pointer group" onClick={() => handleSelectProfile(p.id)}>
@@ -723,7 +723,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 <div className="w-24 h-24 md:w-36 md:h-36 rounded-md border-2 border-zinc-700 group-hover:bg-zinc-800 transition-all flex items-center justify-center text-5xl text-zinc-500 group-hover:text-white">
                   +
                 </div>
-                <span className="text-zinc-500 group-hover:text-white transition-colors text-sm md:text-lg">Profil Ekle</span>
+                <span className="text-zinc-500 group-hover:text-white transition-colors text-sm md:text-lg">{t.addProfile}</span>
               </div>
             )}
           </div>
@@ -731,19 +731,19 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
           {isCreatingProfile && (
             <div className="fixed inset-0 bg-black/90 z-[5010] flex items-center justify-center">
               <div className="bg-zinc-900 p-8 rounded-xl max-w-sm w-full shadow-2xl border border-zinc-800">
-                <h2 className="text-2xl font-bold mb-4 text-white">Yeni Profil</h2>
-                <input 
-                  type="text" 
-                  placeholder="İsim girin..." 
+                <h2 className="text-2xl font-bold mb-4 text-white">{t.newProfile}</h2>
+                <input
+                  type="text"
+                  placeholder={t.enterName}
                   autoFocus
-                  value={newProfileName} 
-                  onChange={e => setNewProfileName(e.target.value)} 
+                  value={newProfileName}
+                  onChange={e => setNewProfileName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleAddProfile()}
-                  className="w-full bg-black border border-zinc-700 text-white rounded p-3 mb-6 outline-none focus:border-red-600 transition" 
+                  className="w-full bg-black border border-zinc-700 text-white rounded p-3 mb-6 outline-none focus:border-red-600 transition"
                 />
                 <div className="flex gap-4">
-                  <button onClick={handleAddProfile} className="flex-1 bg-white text-black font-bold py-3 rounded hover:bg-zinc-200 transition">Kaydet</button>
-                  <button onClick={() => { setIsCreatingProfile(false); setNewProfileName(""); }} className="flex-1 border border-zinc-700 text-white font-bold py-3 rounded hover:bg-zinc-800 transition">İptal</button>
+                  <button onClick={handleAddProfile} className="flex-1 bg-white text-black font-bold py-3 rounded hover:bg-zinc-200 transition">{t.save}</button>
+                  <button onClick={() => { setIsCreatingProfile(false); setNewProfileName(""); }} className="flex-1 border border-zinc-700 text-white font-bold py-3 rounded hover:bg-zinc-800 transition">{t.cancel}</button>
                 </div>
               </div>
             </div>
@@ -762,8 +762,8 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
         <div className="bg-red-600/90 backdrop-blur text-white text-center py-2 text-sm font-bold flex items-center justify-center gap-4 shadow-lg z-50 relative">
           <span>🎭 {t.guestMode}</span>
           <span className="opacity-50">|</span>
-          <span className="text-yellow-300">Bağlanılan Host: {hostName !== "Bilinmiyor" ? hostName : targetAddress || "Yerel Ağ"}</span>
-          <button onClick={() => window.location.reload()} className="ml-4 bg-black/30 hover:bg-black/50 px-3 py-1 rounded transition">Ağdan Ayrıl</button>
+          <span className="text-yellow-300">{t.connectedHostLabel} {hostName !== "Bilinmiyor" ? hostName : targetAddress || t.localNetworkFallback}</span>
+          <button onClick={() => window.location.reload()} className="ml-4 bg-black/30 hover:bg-black/50 px-3 py-1 rounded transition">{t.leaveNetworkBtn}</button>
         </div>
       )}
 
@@ -774,14 +774,14 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
           <div className="font-bold flex items-center gap-3">
             <span className="text-2xl">🚀</span>
             <div>
-              <p>Kinflix'in Yeni Bir Sürümü Çıktı! (v{updateInfo.version})</p>
+              <p>{t.kinflixNewVersion}{updateInfo.version})</p>
               <p className="text-xs text-blue-200">{updateInfo.body}</p>
             </div>
           </div>
           <div className="flex gap-3">
-            <button onClick={() => setUpdateInfo(null)} className="px-4 py-2 bg-black/20 hover:bg-black/40 rounded transition text-sm font-bold">Sonra</button>
+            <button onClick={() => setUpdateInfo(null)} className="px-4 py-2 bg-black/20 hover:bg-black/40 rounded transition text-sm font-bold">{t.laterBtn}</button>
             <button onClick={installUpdate} disabled={isUpdating} className="px-4 py-2 bg-white text-blue-600 hover:bg-zinc-200 rounded transition text-sm font-bold">
-              {isUpdating ? "⏳ Yükleniyor..." : "İndir ve Yeniden Başlat"}
+              {isUpdating ? t.installingUpdate : t.downloadRestartBtn}
             </button>
           </div>
         </div>
@@ -790,12 +790,12 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
       {isWeb && !isTV && partyStatus === 'connecting' && (
         <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
           <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
-          <h1 className="text-3xl font-bold text-white animate-pulse mb-8">Odaya Bağlanılıyor...</h1>
-          <button 
-            onClick={disconnectParty} 
+          <h1 className="text-3xl font-bold text-white animate-pulse mb-8">{t.connectingToRoom}</h1>
+          <button
+            onClick={disconnectParty}
             className="rounded-lg bg-zinc-800/80 px-6 py-3 text-sm font-bold text-zinc-300 transition hover:bg-zinc-700 hover:text-white border border-zinc-700 shadow-xl"
           >
-            ✕ İptal Et ve Geri Dön
+            {t.cancelAndReturn}
           </button>
         </div>
       )}
@@ -803,15 +803,15 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
       {isWeb && !isTV && partyStatus === 'disconnected' && (
         <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
           <h1 className="text-6xl font-extrabold tracking-tight mb-8">KIN<span className="text-red-600">FLIX</span> <span className="text-2xl text-zinc-500">WEB</span></h1>
-          <p className="text-zinc-400 mb-8 max-w-md">Arkadaşının bilgisayarına doğrudan bağlanıp birlikte film izlemek için 6 Haneli Oda Kodunu veya IP'yi gir.</p>
+          <p className="text-zinc-400 mb-8 max-w-md">{t.webJoinDesc}</p>
           <div className="w-full max-w-md flex flex-col gap-4">
-            <input 
-              type="text" placeholder="Oda Kodu (Örn: AB7K2Q)" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} 
+            <input
+              type="text" placeholder={t.roomCodePlaceholder} value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && connectParty(targetAddress)}
-              className="w-full rounded-xl border-2 border-zinc-800 bg-black px-6 py-4 text-center text-xl text-white outline-none focus:border-red-600 transition font-mono uppercase tracking-widest" 
+              className="w-full rounded-xl border-2 border-zinc-800 bg-black px-6 py-4 text-center text-xl text-white outline-none focus:border-red-600 transition font-mono uppercase tracking-widest"
             />
             <button onClick={() => connectParty(targetAddress)} className="w-full rounded-xl bg-red-600 py-4 text-xl font-bold hover:bg-red-700 transition shadow-[0_0_20px_rgba(220,38,38,0.4)]">
-              Odaya Katıl 🚀
+              {t.joinRoomBtn}
             </button>
           </div>
         </div>
@@ -820,15 +820,15 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
       {isTV && partyStatus === 'disconnected' && (
         <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-[#0b0b0b] px-4 text-center">
           <h1 className="text-6xl font-extrabold tracking-tight mb-8">KIN<span className="text-red-600">FLIX</span> <span className="text-2xl text-zinc-500">TV</span></h1>
-          <p className="text-zinc-400 mb-8 max-w-md">Televizyon kumandası ile yerel ağı (Kısa TV Kodu) veya IP adresini girerek bağlan.</p>
+          <p className="text-zinc-400 mb-8 max-w-md">{t.tvDesc}</p>
           <div className="w-full max-w-md flex flex-col gap-4">
-            <input 
-              autoFocus type="number" placeholder="Örn: 900261" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} 
+            <input
+              autoFocus type="number" placeholder={t.tvCodePlaceholder} value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && connectParty(targetAddress)}
-              className="w-full rounded-xl border-2 border-zinc-800 bg-black px-6 py-4 text-center text-3xl text-white outline-none focus:border-red-600 transition font-mono tracking-widest" 
+              className="w-full rounded-xl border-2 border-zinc-800 bg-black px-6 py-4 text-center text-3xl text-white outline-none focus:border-red-600 transition font-mono tracking-widest"
             />
             <button onClick={() => connectParty(targetAddress)} className="w-full rounded-xl bg-red-600 py-4 text-xl font-bold hover:bg-red-700 transition shadow-[0_0_20px_rgba(220,38,38,0.4)] focus:ring-4 focus:ring-white">
-              Odaya Katıl 🚀
+              {t.joinRoomBtn}
             </button>
           </div>
         </div>
@@ -842,35 +842,35 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             <button onClick={() => setActiveTab("library")} className={`transition hover:text-zinc-300 ${activeTab === "library" ? "text-white" : "text-zinc-500"}`}>{t.library}</button>
             <button onClick={() => setActiveTab("collections")} className={`transition hover:text-zinc-300 ${activeTab === "collections" ? "text-white" : "text-zinc-500"}`}>{t.collections}</button>
             <button onClick={() => setActiveTab("watchlist")} className={`transition hover:text-zinc-300 ${activeTab === "watchlist" ? "text-white" : "text-zinc-500"}`}>{t.watchlistTab}</button>
-            <button onClick={() => setActiveTab("foryou")} className={`transition hover:text-zinc-300 ${activeTab === "foryou" ? "text-white" : "text-zinc-500"}`}>Sana Özel</button>
-            <button onClick={() => setActiveTab("yts")} className={`transition hover:text-zinc-300 flex items-center gap-1 ${activeTab === "yts" ? "text-green-400" : "text-green-900"}`}>YTS Keşfet</button>
+            <button onClick={() => setActiveTab("foryou")} className={`transition hover:text-zinc-300 ${activeTab === "foryou" ? "text-white" : "text-zinc-500"}`}>{t.forYouNav}</button>
+            <button onClick={() => setActiveTab("yts")} className={`transition hover:text-zinc-300 flex items-center gap-1 ${activeTab === "yts" ? "text-green-400" : "text-green-900"}`}>{t.ytsNav}</button>
             <button onClick={playRandomMovie} className="ml-4 flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-900/80 px-4 py-1.5 text-xs font-bold text-white transition hover:bg-zinc-800 hover:scale-105">
               {t.random}
             </button>
             <button onClick={() => setIsWizardOpen(true)} className="ml-2 flex items-center gap-2 rounded-full border border-red-900/50 bg-red-600/20 px-4 py-1.5 text-xs font-bold text-red-500 transition hover:bg-red-600/40 hover:scale-105">
-              ✨ Film Bul
+              {t.findMovieNav}
             </button>
             
           </nav>
         </div>
         <div className="flex items-center gap-3">
           <button onClick={() => setIsPartyMenuOpen(true)} className={`flex items-center gap-2 rounded px-4 py-2 text-sm font-bold backdrop-blur transition ${partyStatus === 'connected' ? 'bg-green-600/80 hover:bg-green-700' : 'bg-zinc-800/80 hover:bg-zinc-700'}`}>
-            🎉 {partyStatus === 'connected' ? (isHost ? 'Oda Kuruldu' : 'MİSAFİR MODU') : t.party}
+            🎉 {partyStatus === 'connected' ? (isHost ? t.roomCreated : t.guestModeShort) : t.party}
           </button>
           {isHost && movies.length > 0 && !isWeb && (
             <button onClick={syncMovieMetadata} disabled={syncing} className="rounded bg-zinc-800/80 px-4 py-2 text-sm font-bold backdrop-blur transition hover:bg-zinc-700 disabled:opacity-50">
               {syncing ? t.syncing : t.sync}
             </button>
           )}
-          <button onClick={() => setIsStatsOpen(true)} className="flex h-9 w-9 items-center justify-center rounded bg-zinc-800/80 backdrop-blur transition hover:bg-zinc-700" title="İstatistikler">📊</button>
-          <button onClick={() => setIsSettingsOpen(true)} className="flex h-9 w-9 items-center justify-center rounded bg-zinc-800/80 backdrop-blur transition hover:bg-zinc-700" title="Ayarlar">⚙️</button>
+          <button onClick={() => setIsStatsOpen(true)} className="flex h-9 w-9 items-center justify-center rounded bg-zinc-800/80 backdrop-blur transition hover:bg-zinc-700" title={t.statsIconTitle}>📊</button>
+          <button onClick={() => setIsSettingsOpen(true)} className="flex h-9 w-9 items-center justify-center rounded bg-zinc-800/80 backdrop-blur transition hover:bg-zinc-700" title={t.settings}>⚙️</button>
         </div>
       </header>
 
       {/* ANA İÇERİK - MİSSİNG BÖLÜM BURASIYDI */}
       {(partyStatus === 'connected' || (!isWeb && !isTV)) && (
         <main className="flex-1 pb-10">
-          {error && <div className="mx-10 mb-6 rounded-xl border border-red-900 bg-red-950/30 p-4 text-red-400">Hata: {error}</div>}
+          {error && <div className="mx-10 mb-6 rounded-xl border border-red-900 bg-red-950/30 p-4 text-red-400">{t.errorPrefix} {error}</div>}
           {movies.length === 0 && !scanning && !syncing ? (
             <div className="flex min-h-[50vh] flex-col items-center justify-center px-10">
               <h3 className="text-2xl font-bold">{t.emptyLib}</h3>
@@ -893,7 +893,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
               {activeTab === "collections" && (
                 <div className="animate-in fade-in duration-500 px-10 pt-4">
                   <h2 className="mb-6 text-2xl font-bold">{t.collections}</h2>
-                  {collections.length === 0 ? <div className="text-zinc-500">Herhangi bir koleksiyon bulunamadı.</div> : (
+                  {collections.length === 0 ? <div className="text-zinc-500">{t.noCollectionsFound}</div> : (
                     <div>
                       {collections.map(item => <MovieRow key={item.name} title={`🎬 ${item.name}`} data={item.movies} onMovieClick={handleMovieClick} />)}
                     </div>
@@ -910,8 +910,8 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
               )}
               {activeTab === "foryou" && (
                 <div className="animate-in fade-in duration-500 px-10 pt-4">
-                  <h2 className="mb-2 text-2xl font-bold">✨ Sana Özel Algoritma</h2>
-                  <p className="text-zinc-500 text-sm mb-6">Beğendiğin filmlerin ağırlık grafiğine göre senin için seçilenler.</p>
+                  <h2 className="mb-2 text-2xl font-bold">{t.forYouTitle}</h2>
+                  <p className="text-zinc-500 text-sm mb-6">{t.forYouDesc}</p>
                   <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
                     {recommendedMovies.map((movie: Movie) => <div key={movie.video_path} onClick={() => handleMovieClick(movie)}><MovieCardFallback movie={movie} /></div>)}
                   </div>
@@ -920,10 +920,10 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
               {activeTab === "yts" && (
                 <div className="animate-in fade-in duration-500 px-10 pt-4">
                   <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl font-bold text-green-400">🏴‍☠️ YTS Dünyası</h2>
-                    <span className="text-xs text-zinc-500">P2P Torrent Streaming</span>
+                    <h2 className="text-2xl font-bold text-green-400">{t.ytsTitle}</h2>
+                    <span className="text-xs text-zinc-500">{t.ytsDesc}</span>
                   </div>
-                  {isFetchingYts ? <div className="text-center text-zinc-500 py-10 animate-pulse">Korsan ağlara bağlanılıyor...</div> : (
+                  {isFetchingYts ? <div className="text-center text-zinc-500 py-10 animate-pulse">{t.ytsLoading}</div> : (
                     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
                       {ytsMovies.map((yts: any) => (
                         <div key={yts.id} className="w-full h-full aspect-[2/3] relative group bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800 hover:border-green-500 transition shadow-lg cursor-pointer" onClick={() => streamYtsMovie(yts)}>
@@ -966,12 +966,12 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
 {!isWeb && isHost ? (
                 <>
                   <div className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-4 text-center">
-                    <h3 className="mb-2 text-sm font-semibold text-zinc-400">Sabit İnternet Oda Kodu (Host):</h3>
+                    <h3 className="mb-2 text-sm font-semibold text-zinc-400">{t.hostCode}</h3>
                     <div className="bg-black rounded-lg p-2 text-4xl font-black tracking-widest text-green-400 border border-zinc-800 flex justify-between items-center px-6">
                       <div className="flex items-center gap-3">
                         <span>{peerId || "..."}</span>
                         {peerId && (
-                          <button onClick={() => { navigator.clipboard.writeText(peerId); showToast("Oda kodu kopyalandı!", "📋"); }} className="text-xl text-zinc-500 hover:text-white transition hover:scale-110" title="Kodu Kopyala">
+                          <button onClick={() => { navigator.clipboard.writeText(peerId); showToast(t.roomCodeCopied, "📋"); }} className="text-xl text-zinc-500 hover:text-white transition hover:scale-110" title={t.copyRoomCodeTitle}>
                             📋
                           </button>
                         )}
@@ -980,27 +980,27 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                         localStorage.removeItem("kinflix_host_code");
                         window.location.reload();
                       }} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-2 rounded-lg font-bold border border-zinc-700 transition">
-                        🔄 Kodu Değiştir
+                        {t.changeCode}
                       </button>
                     </div>
-                    
-                    <h3 className="mt-4 mb-2 text-sm font-semibold text-zinc-400">Yerel IP (Aynı Ev / Wi-Fi İçin):</h3>
+
+                    <h3 className="mt-4 mb-2 text-sm font-semibold text-zinc-400">{t.localIp}</h3>
                     <div className="bg-black rounded-lg p-2 text-xl font-mono tracking-widest text-blue-400 border border-zinc-800 flex justify-between items-center px-4">
                       <div className="flex items-center gap-3">
-                        <span>{localIp || "Yükleniyor..."}</span>
+                        <span>{localIp || t.loadingEllipsis}</span>
                         {localIp && localIp !== "Bilinmiyor" && (
-                          <button onClick={() => { navigator.clipboard.writeText(localIp); showToast("IP kopyalandı!", "📋"); }} className="text-lg text-zinc-500 hover:text-white transition hover:scale-110" title="IP'yi Kopyala">
+                          <button onClick={() => { navigator.clipboard.writeText(localIp); showToast(t.ipCopied, "📋"); }} className="text-lg text-zinc-500 hover:text-white transition hover:scale-110" title={t.copyIpTitle}>
                             📋
                           </button>
                         )}
                       </div>
                       {generateLocalShortCode(localIp) && (
-                        <span 
-                          onClick={() => { navigator.clipboard.writeText(generateLocalShortCode(localIp)); showToast("TV Kodu kopyalandı!", "📋"); }}
+                        <span
+                          onClick={() => { navigator.clipboard.writeText(generateLocalShortCode(localIp)); showToast(t.tvCodeCopied, "📋"); }}
                           className="text-sm bg-blue-900/30 text-blue-300 px-3 py-1 rounded border border-blue-800/50 flex flex-col items-center cursor-pointer hover:bg-blue-800/60 transition"
-                          title="TV Kodunu Kopyala"
+                          title={t.copyTvCodeTitle}
                         >
-                          <span className="text-[10px] uppercase tracking-wider text-blue-500 font-bold mb-0.5">TV Kısa Kodu</span>
+                          <span className="text-[10px] uppercase tracking-wider text-blue-500 font-bold mb-0.5">{t.tvShortCode}</span>
                           <div className="flex items-center gap-1.5">
                             <span>{generateLocalShortCode(localIp)}</span>
                             <span className="text-xs opacity-50">📋</span>
@@ -1011,49 +1011,49 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                   </div>
 
                   <div>
-                    <h3 className="mb-2 text-sm font-semibold text-zinc-400">Arkadaşının Kodunu Gir:</h3>
+                    <h3 className="mb-2 text-sm font-semibold text-zinc-400">{t.enterFriendCode}</h3>
                     <div className="flex gap-2">
-                      <input type="text" placeholder="Örn: AB7K2Q veya 900261" value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} className="flex-1 rounded-lg border border-zinc-700 bg-black px-4 py-2 text-white outline-none focus:border-zinc-500 transition font-mono uppercase" />
+                      <input type="text" placeholder={t.friendCodePlaceholder} value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} className="flex-1 rounded-lg border border-zinc-700 bg-black px-4 py-2 text-white outline-none focus:border-zinc-500 transition font-mono uppercase" />
                       <button onClick={() => connectParty(targetAddress)} className="rounded-lg bg-red-600 px-6 font-bold hover:bg-red-700 transition">{t.connect}</button>
                     </div>
                   </div>
-                  
+
                   {partyStatus === 'connected' && (
                      <button onClick={disconnectParty} className="mt-4 w-full rounded bg-red-600/20 py-3 text-red-500 font-bold hover:bg-red-600/40 border border-red-900/50 transition">
-                       Ağı Kapat ve Odadan Ayrıl
+                       {t.leaveRoom}
                      </button>
                   )}
                 </>
               ) : (
                 <div className="text-center py-6">
-                   <h3 className="text-2xl font-bold text-green-400 mb-2">Başarıyla Bağlandınız!</h3>
-                   <p className="text-zinc-400 mb-8">Şu anda oda kurucusunun (Host) kütüphanesini görüntülüyorsunuz.</p>
-                   
+                   <h3 className="text-2xl font-bold text-green-400 mb-2">{t.connectedSuccessfully}</h3>
+                   <p className="text-zinc-400 mb-8">{t.viewingHostLibrary}</p>
+
                    <button onClick={() => {
                      if (partyStatus === 'connected') {
                        broadcastEvent("request_catalog");
                      } else {
-                       alert("Önce bir odaya bağlı olmalısın!");
+                       alert(t.mustBeConnectedFirst);
                      }
                    }} className="w-full rounded bg-blue-600/20 py-3 text-blue-400 font-bold hover:bg-blue-600/40 border border-blue-900/50 transition mb-4">
-                     🔄 Kataloğu Senkronize Et
+                     {t.syncCatalog}
                    </button>
-                   
+
                    <button onClick={disconnectParty} className="w-full rounded bg-red-600/20 py-3 text-red-500 font-bold hover:bg-red-600/40 border border-red-900/50 transition">
-                     Odadan Ayrıl / Bağlantıyı Kes
+                     {t.disconnect}
                    </button>
                 </div>
               )}
             </div>
-            
+
             {!isWeb && isHost && (
               <div className="w-48 flex flex-col items-center justify-center border-l border-zinc-800 pl-8">
-                 <h3 className="text-sm font-bold text-zinc-400 mb-4 text-center">Telefondan Katıl</h3>
+                 <h3 className="text-sm font-bold text-zinc-400 mb-4 text-center">{t.joinFromPhone}</h3>
                  <div className="bg-white p-2 rounded-xl">
                    <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent('https://kinflix.netlify.app/?room=' + peerId)}`} alt="Kinflix QR" className="w-32 h-32" />
                  </div>
-                 <p className="text-xs text-zinc-500 mt-4 text-center">Kameranı okutarak anında odaya gir.</p>
-                 <button onClick={() => setIsPartyMenuOpen(false)} className="mt-8 text-zinc-500 hover:text-white font-bold">Kapat ✕</button>
+                 <p className="text-xs text-zinc-500 mt-4 text-center">{t.scanQr}</p>
+                 <button onClick={() => setIsPartyMenuOpen(false)} className="mt-8 text-zinc-500 hover:text-white font-bold">{t.closeBtn}</button>
               </div>
             )}
             {(isWeb || !isHost) && (
@@ -1081,17 +1081,17 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             </div>
 
             <div className="mb-6 border-b border-zinc-800 pb-6">
-              <h3 className="text-white font-bold mb-4">🔤 Altyazı Görünümü</h3>
+              <h3 className="text-white font-bold mb-4">🔤 {t.subtitleAppearance}</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
-                  <p className="text-xs text-zinc-500 mb-2 uppercase tracking-wider font-bold">Renk</p>
+                  <p className="text-xs text-zinc-500 mb-2 uppercase tracking-wider font-bold">{t.subtitleColorLabel}</p>
                   <div className="flex gap-2">
-                    <button onClick={() => updateSubSetting('color', 'text-white')} className={`flex-1 py-2 rounded-lg font-bold border transition ${subSettings.color === 'text-white' ? 'border-white bg-white text-black' : 'border-zinc-700 bg-zinc-900 text-white'}`}>Beyaz</button>
-                    <button onClick={() => updateSubSetting('color', 'text-yellow-400')} className={`flex-1 py-2 rounded-lg font-bold border transition ${subSettings.color === 'text-yellow-400' ? 'border-yellow-400 bg-yellow-400 text-black' : 'border-zinc-700 bg-zinc-900 text-yellow-400'}`}>Sarı</button>
+                    <button onClick={() => updateSubSetting('color', 'text-white')} className={`flex-1 py-2 rounded-lg font-bold border transition ${subSettings.color === 'text-white' ? 'border-white bg-white text-black' : 'border-zinc-700 bg-zinc-900 text-white'}`}>{t.colorWhite}</button>
+                    <button onClick={() => updateSubSetting('color', 'text-yellow-400')} className={`flex-1 py-2 rounded-lg font-bold border transition ${subSettings.color === 'text-yellow-400' ? 'border-yellow-400 bg-yellow-400 text-black' : 'border-zinc-700 bg-zinc-900 text-yellow-400'}`}>{t.colorYellow}</button>
                   </div>
                 </div>
                 <div>
-                  <p className="text-xs text-zinc-500 mb-2 uppercase tracking-wider font-bold">Boyut</p>
+                  <p className="text-xs text-zinc-500 mb-2 uppercase tracking-wider font-bold">{t.subtitleSizeLabel}</p>
                   <div className="flex gap-2">
                     <button onClick={() => updateSubSetting('size', '1.8vw')} className={`flex-1 py-2 rounded-lg text-sm border transition ${subSettings.size === '1.8vw' ? 'border-red-500 bg-red-600/20' : 'border-zinc-700 bg-zinc-900'}`}>A-</button>
                     <button onClick={() => updateSubSetting('size', '2.4vw')} className={`flex-1 py-2 rounded-lg text-base border transition ${subSettings.size === '2.4vw' ? 'border-red-500 bg-red-600/20' : 'border-zinc-700 bg-zinc-900'}`}>A</button>
@@ -1099,11 +1099,11 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                   </div>
                 </div>
                 <div>
-                  <p className="text-xs text-zinc-500 mb-2 uppercase tracking-wider font-bold">Arkaplan</p>
+                  <p className="text-xs text-zinc-500 mb-2 uppercase tracking-wider font-bold">{t.subtitleBgLabel}</p>
                   <select value={subSettings.bg} onChange={(e) => updateSubSetting('bg', e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg py-2 px-3 outline-none focus:border-red-500">
-                    <option value="none">Şeffaf (Sadece Yazı)</option>
-                    <option value="text-shadow">Siyah Gölge (Standart)</option>
-                    <option value="solid">Siyah Kutu (Yüksek Okunabilirlik)</option>
+                    <option value="none">{t.bgTransparent}</option>
+                    <option value="text-shadow">{t.bgShadow}</option>
+                    <option value="solid">{t.bgSolid}</option>
                   </select>
                 </div>
               </div>
@@ -1111,12 +1111,12 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
 
             {(!isHost && partyStatus === 'connected') || isWeb || isTV ? (
               <div className="text-center py-6">
-                <h3 className="text-2xl font-bold text-white mb-4">Misafir Modundasınız 🎭</h3>
-                <p className="text-zinc-400 leading-relaxed max-w-md mx-auto">Oda kurucusunun (Host) kütüphanesini görüntülüyorsunuz. Bütün film verileri doğrudan Host'tan size aktarılıyor.<br/><br/>Arkanıza yaslanın ve filmin tadını çıkarın!</p>
-                
+                <h3 className="text-2xl font-bold text-white mb-4">{t.guestMode}</h3>
+                <p className="text-zinc-400 leading-relaxed max-w-md mx-auto">{t.guestModeDesc}<br/><br/>{t.enjoyTheShow}</p>
+
                 <div className="mt-8 rounded-xl border border-blue-900/50 bg-blue-950/20 p-4 max-w-xs mx-auto">
-                  <h3 className="text-blue-500 font-bold mb-2">Sistem Durumu</h3>
-                  <p className="text-sm text-zinc-300">Web arayüzü Vercel/Netlify tarafından otomatik güncellenir.</p>
+                  <h3 className="text-blue-500 font-bold mb-2">{t.systemStatus}</h3>
+                  <p className="text-sm text-zinc-300">{t.systemStatusDesc}</p>
                 </div>
               </div>
             ) : (
@@ -1128,7 +1128,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 <div>
                   <div className="mb-2 flex items-center justify-between"><h3 className="text-lg font-semibold text-zinc-300">{t.libCount} ({libraries.length})</h3><button onClick={chooseFolder} disabled={scanning} className="text-sm font-bold text-red-500 hover:text-red-400">{t.addLib}</button></div>
                   <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950 p-2">
-                    {libraries.length === 0 ? <p className="p-2 text-sm text-zinc-500">Yok</p> : libraries.map(lib => (
+                    {libraries.length === 0 ? <p className="p-2 text-sm text-zinc-500">{t.noneFound}</p> : libraries.map(lib => (
                       <div key={lib} className="flex items-center justify-between rounded p-2 hover:bg-zinc-800"><span className="truncate text-sm text-zinc-300">{lib}</span><button onClick={async () => { await removeLibraryFolder(lib); setMovies(await getMovies(activeProfile || "default")); }} className="ml-4 text-xs font-bold text-red-500">{t.remove}</button></div>
                     ))}
                   </div>
@@ -1142,7 +1142,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 </div>
 
                 <div className="mb-6 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
-                  <h3 className="text-white font-bold mb-3">Vurgu Rengi (Tema)</h3>
+                  <h3 className="text-white font-bold mb-3">{t.accentColor}</h3>
                   <div className="flex gap-3">
                     <button onClick={() => {setThemeColor('red'); localStorage.setItem("kinflix_theme", "red");}} className={`w-8 h-8 rounded-full bg-red-600 ${themeColor === 'red' ? 'ring-4 ring-white' : ''}`}></button>
                     <button onClick={() => {setThemeColor('blue'); localStorage.setItem("kinflix_theme", "blue");}} className={`w-8 h-8 rounded-full bg-blue-600 ${themeColor === 'blue' ? 'ring-4 ring-white' : ''}`}></button>
@@ -1151,7 +1151,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-4"><h3 className="text-red-500 font-bold mb-2">{t.dangerZone}</h3><button onClick={async () => { if(confirm("Emin misin?")) { await clearDatabase(); setMovies([]); setIsSettingsOpen(false); } }} className="rounded bg-red-600 px-4 py-2 text-sm font-bold transition hover:bg-red-700">{t.resetDb}</button></div>
+                <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-4"><h3 className="text-red-500 font-bold mb-2">{t.dangerZone}</h3><button onClick={async () => { if(confirm(t.confirmReset)) { await clearDatabase(); setMovies([]); setIsSettingsOpen(false); } }} className="rounded bg-red-600 px-4 py-2 text-sm font-bold transition hover:bg-red-700">{t.resetDb}</button></div>
               </div>
             )}
           </div>
@@ -1184,7 +1184,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 <button 
                   onClick={(e) => { e.stopPropagation(); setIsBgMuted(!isBgMuted); }}
                   className="absolute bottom-8 right-10 z-[70] flex h-12 w-12 items-center justify-center rounded-full border border-zinc-500 bg-black/40 text-xl text-white backdrop-blur transition hover:scale-110 hover:border-white hover:bg-black/60 shadow-[0_0_15px_rgba(0,0,0,0.5)]"
-                  title={isBgMuted ? "Sesi Aç" : "Sesi Kapat"}
+                  title={isBgMuted ? t.soundOn : t.soundOff}
                 >
                   {isBgMuted ? "🔇" : "🔊"}
                 </button>
@@ -1197,7 +1197,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             <div className="mt-6 flex flex-wrap items-center gap-4 text-sm font-semibold text-zinc-300">
               {selectedMovie.rating != null && selectedMovie.rating > 0 && <span className="flex items-center gap-1 text-yellow-500 font-bold text-base">⭐ {selectedMovie.rating.toFixed(1)} IMDB</span>}
               {selectedMovie.year && <span>{selectedMovie.year}</span>}
-              {selectedMovie.runtime && <span>{selectedMovie.runtime} min</span>}
+              {selectedMovie.runtime && <span>{selectedMovie.runtime} {t.min}</span>}
               <span className="rounded border border-zinc-500 px-1.5 py-0.5 text-xs text-zinc-300">HD</span>
             </div>
             
@@ -1221,7 +1221,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 }}
                 className="flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border bg-purple-600/20 border-purple-500/50 hover:bg-purple-600/40 hover:border-purple-400"
               >
-                👓 3D Sinema Modu
+                👓 {t.theaterModeBtn}
               </button>
 
                 {!isWeb && !selectedMovie.video_path.startsWith("torrent-") && (
@@ -1229,7 +1229,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                     {convertingMoviePath === selectedMovie.video_path ? (
                       <div className="w-full bg-zinc-900/80 rounded-xl p-4 border border-zinc-700 backdrop-blur">
                         <div className="flex justify-between text-xs font-bold mb-2">
-                          <span className="text-blue-400 animate-pulse">⏳ x264'e Çevriliyor... İşlemci yanıyor 🔥</span>
+                          <span className="text-blue-400 animate-pulse">{t.convertingToX264}</span>
                           <span className="text-white">{convertProgress.toFixed(1)}%</span>
                         </div>
                         <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden shadow-inner">
@@ -1246,12 +1246,12 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                           try {
                             setConvertingMoviePath(selectedMovie.video_path);
                             setConvertProgress(0);
-                            showToast("Dönüştürme motoru başlatıldı...", "⏳");
+                            showToast(t.conversionStartedToast, "⏳");
                             const { invoke } = await import('@tauri-apps/api/core');
                             await invoke('convert_video', { path: selectedMovie.video_path });
                           } catch (err) {
                             setConvertingMoviePath(null);
-                            showToast("Çeviri başlatılamadı!", "❌");
+                            showToast(t.conversionFailedToast, "❌");
                           }
                         }} 
                         className="flex items-center justify-center gap-2 w-full bg-zinc-800 hover:bg-blue-600 text-white text-sm font-bold py-3 px-4 rounded-xl transition border border-zinc-700 hover:border-blue-500 shadow-lg"
@@ -1267,7 +1267,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
               
               {!isWeb && isHost && !selectedMovie.video_path.startsWith("torrent-") && (
                 <button disabled={isConverting} onClick={convertToX264} className={`flex items-center justify-center gap-2 rounded px-8 py-3 text-sm font-bold text-white transition backdrop-blur border ${isConverting ? 'bg-blue-600/50 border-blue-500 cursor-not-allowed' : 'bg-blue-600/20 border-blue-500/50 hover:bg-blue-600/40 hover:border-blue-400'}`}>
-                  {isConverting ? "⏳ Çevriliyor..." : "🔄 Web İçin Optimize Et (x264)"}
+                  {isConverting ? t.convertStarted : t.convertToX264}
                 </button>
               )}
             </div>
@@ -1275,24 +1275,24 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             <div className="mt-10 flex flex-col md:flex-row gap-10">
               <div className="flex-[2]"><p className="text-lg leading-relaxed text-zinc-300">{selectedMovie.overview || t.noOverview}</p></div>
               <div className="flex-1 flex flex-col gap-3 text-sm">
-                {selectedMovie.genres && <p><span className="text-zinc-500">Genres:</span> <span className="text-zinc-300">{selectedMovie.genres}</span></p>}
+                {selectedMovie.genres && <p><span className="text-zinc-500">{t.genresLabel}</span> <span className="text-zinc-300">{selectedMovie.genres}</span></p>}
                 {selectedMovie.director && (
-                  <p><span className="text-zinc-500">Director:</span> {selectedMovie.director.split(',').map((dir, i, arr) => (
+                  <p><span className="text-zinc-500">{t.directorLabel}</span> {selectedMovie.director.split(',').map((dir, i, arr) => (
                     <span key={i}><span onClick={() => handlePersonClick(dir.trim())} className="text-zinc-300 hover:text-white hover:underline cursor-pointer transition">{dir.trim()}</span>{i < arr.length - 1 ? ', ' : ''}</span>
                   ))}</p>
                 )}
                 {selectedMovie.actors && (
-                  <p><span className="text-zinc-500">Cast:</span> {selectedMovie.actors.split(',').map((actor, i, arr) => (
+                  <p><span className="text-zinc-500">{t.castLabel}</span> {selectedMovie.actors.split(',').map((actor, i, arr) => (
                     <span key={i}><span onClick={() => handlePersonClick(actor.trim())} className="text-zinc-300 hover:text-white hover:underline cursor-pointer transition">{actor.trim()}</span>{i < arr.length - 1 ? ', ' : ''}</span>
                   ))}</p>
                 )}
-                {selectedMovie.collection_name && <p><span className="text-zinc-500">Franchise:</span> <span className="text-zinc-300">{selectedMovie.collection_name}</span></p>}
+                {selectedMovie.collection_name && <p><span className="text-zinc-500">{t.franchiseLabel}</span> <span className="text-zinc-300">{selectedMovie.collection_name}</span></p>}
               </div>
             </div>
             
             {sameCollectionMovies.length > 0 && (
               <div className="mt-16">
-                <MovieRow title="🎬 Aynı Serideki Filmler" data={sameCollectionMovies} onMovieClick={handleMovieClick} />
+                <MovieRow title={t.sameCollection} data={sameCollectionMovies} onMovieClick={handleMovieClick} />
               </div>
             )}
             {similarMovies.length > 0 && (
@@ -1309,21 +1309,21 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
           <div className="w-full max-w-lg rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 relative overflow-hidden">
             <div className="absolute -top-20 -right-20 w-64 h-64 bg-red-600/20 rounded-full blur-3xl pointer-events-none"></div>
             <div className="mb-8 flex items-center justify-between relative z-10">
-              <h2 className="text-3xl font-extrabold text-white">📊 İstatistiklerin</h2>
+              <h2 className="text-3xl font-extrabold text-white">{t.statsTitle}</h2>
               <button onClick={() => setIsStatsOpen(false)} className="text-3xl text-zinc-500 hover:text-white transition">✕</button>
             </div>
             <div className="grid grid-cols-2 gap-4 relative z-10">
               <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 text-center shadow-lg">
                 <p className="text-4xl font-black text-white">{userStats.watchedCount}</p>
-                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">İzlenen Film</p>
+                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">{t.statsWatched}</p>
               </div>
               <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 text-center shadow-lg">
                 <p className="text-4xl font-black text-red-500">{userStats.hours}s</p>
-                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">İzleme Süresi</p>
+                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">{t.statsTime}</p>
               </div>
               <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-6 text-center shadow-lg col-span-2">
                 <p className="text-3xl font-black text-white truncate px-2">{userStats.favGenre}</p>
-                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">En Sevdiğin Tür</p>
+                <p className="text-xs text-zinc-500 mt-2 font-bold uppercase tracking-wider">{t.statsFavGenre}</p>
               </div>
             </div>
           </div>
@@ -1345,7 +1345,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
       {!isTV && isChatOpen && partyStatus === 'connected' && (
         <div className="fixed right-0 top-0 bottom-0 w-80 bg-zinc-950 border-l border-zinc-800 z-[250] flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
           <div className="p-4 bg-zinc-900 border-b border-zinc-800 flex justify-between items-center shadow-md">
-            <h3 className="font-bold text-white flex items-center gap-2">📡 Party Lobi <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span></h3>
+            <h3 className="font-bold text-white flex items-center gap-2">{t.partyLobbyHeading} <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span></h3>
             <button onClick={toggleVoiceChat} className={`flex items-center justify-center w-8 h-8 rounded-full transition ${isMicActive ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-zinc-700 hover:bg-zinc-600'}`}>
               {isMicActive ? '🎙️' : '🎤'}
             </button>
@@ -1354,12 +1354,12 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
           
           {/* Lobi Kişileri */}
           <div className="bg-zinc-950 p-3 border-b border-zinc-800">
-            <p className="text-xs text-zinc-500 font-bold mb-2 uppercase">Odada Kimler Var?</p>
+            <p className="text-xs text-zinc-500 font-bold mb-2 uppercase">{t.whoIsInRoom}</p>
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 text-sm text-yellow-400 font-bold">
-                👑 {isHostRef.current ? (profiles.find(p => p.id === activeProfile)?.name || "Sen (Host)") : hostName}
+                👑 {isHostRef.current ? (profiles.find(p => p.id === activeProfile)?.name || t.youHostFallback) : hostName}
               </div>
-              
+
               {isHostRef.current ? (
                 connectedGuests.length > 0 ? (
                   connectedGuests.map((guest, i) => (
@@ -1368,11 +1368,11 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                     </div>
                   ))
                 ) : (
-                  <div className="text-xs text-zinc-600 italic pl-4">Henüz kimse katılmadı...</div>
+                  <div className="text-xs text-zinc-600 italic pl-4">{t.nobodyJoinedYet}</div>
                 )
               ) : (
                 <div className="flex items-center gap-2 text-sm text-zinc-300 pl-4 border-l-2 border-zinc-700">
-                   👤 {guestName || localStorage.getItem("kinflix_guest_name") || "Sen"}
+                   👤 {guestName || localStorage.getItem("kinflix_guest_name") || t.youFallback}
                 </div>
               )}
             </div>
@@ -1512,13 +1512,13 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
           {isRemoteStreaming && connMode === 'webrtc' && !remoteStream && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm pointer-events-none">
               <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4 shadow-[0_0_15px_rgba(220,38,38,0.5)]"></div>
-              <p className="text-white text-xl font-bold animate-pulse">Video Akışı Bekleniyor (P2P)...</p>
+              <p className="text-white text-xl font-bold animate-pulse">{t.waitingForStream}</p>
             </div>
           )}
 
           {duration > 0 && duration - currentTime <= 15 && !isRemoteStreaming && !isTV && !selectedMovie.video_path.startsWith("torrent-") && (sameCollectionMovies[0] || recommendedMovies[0]) && (
              <div className="absolute bottom-32 right-10 z-[120] bg-black/80 border border-zinc-700 p-4 rounded-xl shadow-2xl backdrop-blur-md animate-in slide-in-from-right w-80">
-               <p className="text-zinc-400 text-[10px] font-bold mb-3 uppercase tracking-widest">Sıradaki Film Başlıyor</p>
+               <p className="text-zinc-400 text-[10px] font-bold mb-3 uppercase tracking-widest">{t.upNextStarting}</p>
                <div className="flex gap-4">
                  <div className="w-16 h-24 bg-zinc-800 rounded flex-shrink-0">
                    <img src={(sameCollectionMovies[0] || recommendedMovies[0]).poster_url || ""} className="w-full h-full object-cover rounded"/>
@@ -1530,14 +1530,14 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                      <div className="h-full bg-red-600 transition-all duration-1000 ease-linear" style={{width: `${((15 - (duration - currentTime)) / 15) * 100}%`}}></div>
                    </div>
                    
-                   <p className="text-xs text-zinc-400 mt-1">{Math.ceil(duration - currentTime)} saniye kaldı...</p>
+                   <p className="text-xs text-zinc-400 mt-1">{Math.ceil(duration - currentTime)} {t.secondsLeft}</p>
 
                    <div className="flex gap-2 mt-2">
-                     <button onClick={(e) => { 
-                       e.stopPropagation(); 
-                       closePlayer().then(() => setTimeout(() => startPlayer(sameCollectionMovies[0] || recommendedMovies[0]), 500)); 
+                     <button onClick={(e) => {
+                       e.stopPropagation();
+                       closePlayer().then(() => setTimeout(() => startPlayer(sameCollectionMovies[0] || recommendedMovies[0]), 500));
                      }} className="flex-1 text-xs bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 rounded transition">
-                       Şimdi Aç ▶
+                       {t.openNowBtn}
                      </button>
                    </div>
                    
@@ -1551,7 +1551,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
 
           {currentTime > 10 && currentTime < 120 && !isRemoteStreaming && !isWeb && (
              <button onClick={(e) => { e.stopPropagation(); handleSeekPlayer(currentTime + 85); }} className="absolute bottom-32 right-10 z-50 bg-black/60 border border-zinc-500 text-white font-bold px-6 py-3 rounded hover:bg-white hover:text-black transition-all hover:scale-105 shadow-2xl">
-               İntroyu Atla (85s) ❯
+               {t.skipIntro}
              </button>
           )}
 
@@ -1560,13 +1560,13 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
 
             {!isTV && partyStatus === 'connected' && (
               <button onClick={(e) => {e.stopPropagation(); setIsChatOpen(!isChatOpen);}} className="absolute bottom-[90vh] right-6 flex items-center gap-2 bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded-full backdrop-blur transition shadow-xl border border-blue-500">
-                💬 SOHBET {unreadCount > 0 ? `(${unreadCount})` : ''}
+                💬 {t.chatBtn} {unreadCount > 0 ? `(${unreadCount})` : ''}
               </button>
             )}
 
             {isRemoteStreaming && (
               <div className="absolute bottom-[90vh] right-[150px] bg-red-600 text-white text-xs font-bold px-3 py-2 rounded-full animate-pulse shadow-[0_0_15px_rgba(220,38,38,0.7)]">
-                {connMode === 'webrtc' ? '🔴 CANLI YAYIN (P2P)' : '🔵 AĞ ÜZERİNDEN (HTTP)'}
+                {connMode === 'webrtc' ? t.liveStreamBadge : t.networkStreamBadge}
               </div>
             )}
 
@@ -1574,7 +1574,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
               <span 
                 className="text-sm font-medium w-16 text-center drop-shadow-md cursor-pointer hover:text-white transition select-none"
                 onClick={(e) => { e.stopPropagation(); setRuntimeFormat(prev => prev === 'min' ? 'hour' : 'min'); }}
-                title="Saat/Dakika Görünümünü Değiştir"
+                title={t.timeFormatTitle}
               >
                 {formatTime(currentTime)}
               </span>
@@ -1597,7 +1597,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
               <span 
                 className="text-sm font-medium text-zinc-400 w-16 text-center drop-shadow-md cursor-pointer hover:text-white transition select-none"
                 onClick={(e) => { e.stopPropagation(); setRuntimeFormat(prev => prev === 'min' ? 'hour' : 'min'); }}
-                title="Saat/Dakika Görünümünü Değiştir"
+                title={t.timeFormatTitle}
               >
                 {formatTime(duration)}
               </span>
@@ -1628,11 +1628,11 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
-                    if(isWeb) { showToast("Web modunda TV'ye yansıtılamaz.", "❌"); return; }
-                    showToast("Yerel ağdaki TV'ler taranıyor...", "📺");
-                  }} 
-                  className="text-2xl text-zinc-300 hover:text-white transition group/cast relative mt-1" 
-                  title="Cast to TV"
+                    if(isWeb) { showToast(t.castNotSupportedWeb, "❌"); return; }
+                    showToast(t.scanningTvToast, "📺");
+                  }}
+                  className="text-2xl text-zinc-300 hover:text-white transition group/cast relative mt-1"
+                  title={t.castToTvTitle}
                 >
                   <svg stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
                     <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"></path><line x1="2" y1="20" x2="2.01" y2="20"></line>
@@ -1642,7 +1642,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 <button 
                   onClick={toggleVoiceBoost} 
                   className={`text-xl font-bold transition group relative mt-1 ${isVoiceBoosted ? 'text-blue-500' : 'text-zinc-300 hover:text-white'}`}
-                  title="Ses Güçlendirici (Gece Modu) - Kısayol: B"
+                  title={t.voiceBoostTitle}
                 >
                   <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 24 24" height="1.2em" width="1.2em" xmlns="http://www.w3.org/2000/svg">
                     <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"></path>
@@ -1652,7 +1652,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
 
                 <button onClick={(e) => {e.stopPropagation(); setShowSubMenu(!showSubMenu); setShowSpeedMenu(false);}} className="text-xl font-bold text-zinc-300 hover:text-white">CC</button>
 
-                {!isTV && <button onClick={(e) => {e.stopPropagation(); toggleVirtualTheater(true);}} className="text-2xl text-zinc-300 hover:text-white transition" title="👓 3D Sinema Modu">👓</button>}
+                {!isTV && <button onClick={(e) => {e.stopPropagation(); toggleVirtualTheater(true);}} className="text-2xl text-zinc-300 hover:text-white transition" title={t.theaterModeBtn}>👓</button>}
                 {!isTV && <button onClick={togglePip} className="text-2xl text-zinc-300 hover:text-white transition" title="Small Window">◱</button>}
                 <button onClick={toggleFullscreen} className="text-2xl text-zinc-300 hover:text-white">⛶</button>
                 
@@ -1674,7 +1674,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
     disabled={isGeneratingSub}
     className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-bold transition disabled:opacity-50"
   >
-    {isGeneratingSub ? "⏳ Dinleniyor & Çevriliyor..." : "🤖 AI ile Altyazı Üret"}
+    {isGeneratingSub ? t.aiSubtitleGenerating : t.aiSubtitleGenerateBtn}
   </button>
                       </div>
                       
@@ -1682,7 +1682,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                     
                     {!isTV && (
                       <>
-                        <div className="bg-zinc-800 px-4 py-2 mt-1 text-xs font-bold text-zinc-400 uppercase tracking-wider">İnternetten Bul (STREMIO)</div>
+                        <div className="bg-zinc-800 px-4 py-2 mt-1 text-xs font-bold text-zinc-400 uppercase tracking-wider">{t.findFromInternet}</div>
                         <div className="p-2">
                           {osResults.length === 0 && !isSearchingOS && (
                             <div className="flex gap-2">
@@ -1690,13 +1690,13 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                               <button onClick={(e) => {e.stopPropagation(); searchStremioSubtitles('eng')}} className="flex-1 rounded bg-blue-600/20 py-2 text-xs font-bold text-blue-500 hover:bg-blue-600/40 transition">{t.searchSubEn}</button>
                             </div>
                           )}
-                          {isSearchingOS && <div className="text-center text-sm text-zinc-400 py-2">Stremio'da Aranıyor...</div>}
+                          {isSearchingOS && <div className="text-center text-sm text-zinc-400 py-2">{t.searchingStremio}</div>}
                           {osError && <div className="text-center text-xs text-red-500 py-2 font-bold bg-red-950/30 rounded mb-2">{osError}</div>}
                           {osResults.map((res: any) => {
                             const isDownloading = downloadingId === res.id;
                             return (
                               <button key={res.id} disabled={isDownloading} onClick={(e) => {e.stopPropagation(); downloadStremioSubtitle(res)}} className={`w-full text-left px-2 py-2 text-xs text-zinc-300 hover:bg-zinc-800 rounded truncate ${isDownloading ? 'opacity-50' : ''}`}>
-                                {isDownloading ? "⏳ İndiriliyor..." : `⬇ Stremio [${res.lang}] - Dosya`}
+                                {isDownloading ? t.downloading : `⬇ Stremio [${res.lang}] - ${t.stremioFileLabel}`}
                               </button>
                             );
                           })}
@@ -1716,42 +1716,42 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
         <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/90 backdrop-blur-md px-4 animate-in fade-in zoom-in-95">
           <div className="w-full max-w-2xl rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 relative">
             <button onClick={() => setIsWizardOpen(false)} className="absolute top-6 right-6 text-2xl text-zinc-500 hover:text-white transition">✕</button>
-            <h2 className="text-3xl font-bold mb-2 flex items-center gap-3">✨ Ne İzlesek?</h2>
-            <p className="text-zinc-400 mb-8">Kütüphanenden moduna uygun filmi bulalım.</p>
+            <h2 className="text-3xl font-bold mb-2 flex items-center gap-3">{t.wizardHeading}</h2>
+            <p className="text-zinc-400 mb-8">{t.wizardDesc}</p>
 
             {!wizardResult && !isWizardSpinning && (
               <div className="space-y-6">
                 <div>
-                  <label className="block text-sm font-bold text-zinc-500 mb-2 uppercase">Ne Kadar Vaktin Var?</label>
+                  <label className="block text-sm font-bold text-zinc-500 mb-2 uppercase">{t.wizardDurationLabel}</label>
                   <div className="flex gap-2">
-                    <button onClick={() => setWizardFilters({...wizardFilters, duration: 'short'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.duration === 'short' ? 'border-red-500 bg-red-600/20 text-red-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>Kısa (90dk)</button>
-                    <button onClick={() => setWizardFilters({...wizardFilters, duration: 'medium'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.duration === 'medium' ? 'border-red-500 bg-red-600/20 text-red-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>Normal (~2 Saat)</button>
-                    <button onClick={() => setWizardFilters({...wizardFilters, duration: 'long'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.duration === 'long' ? 'border-red-500 bg-red-600/20 text-red-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>Uzun (120dk)</button>
-                    <button onClick={() => setWizardFilters({...wizardFilters, duration: 'any'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.duration === 'any' ? 'border-white bg-zinc-800 text-white' : 'border-zinc-700 bg-black text-zinc-300'}`}>Fark Etmez</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, duration: 'short'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.duration === 'short' ? 'border-red-500 bg-red-600/20 text-red-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.durationShort}</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, duration: 'medium'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.duration === 'medium' ? 'border-red-500 bg-red-600/20 text-red-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.durationMedium}</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, duration: 'long'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.duration === 'long' ? 'border-red-500 bg-red-600/20 text-red-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.durationLong}</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, duration: 'any'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.duration === 'any' ? 'border-white bg-zinc-800 text-white' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.anyOption}</button>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-bold text-zinc-500 mb-2 uppercase">Hangi Dönem?</label>
+                  <label className="block text-sm font-bold text-zinc-500 mb-2 uppercase">{t.wizardYearLabel}</label>
                   <div className="flex gap-2">
-                    <button onClick={() => setWizardFilters({...wizardFilters, year: 'new'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.year === 'new' ? 'border-blue-500 bg-blue-600/20 text-blue-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>Yeni (2020+)</button>
-                    <button onClick={() => setWizardFilters({...wizardFilters, year: '2010s'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.year === '2010s' ? 'border-blue-500 bg-blue-600/20 text-blue-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>2010'lar</button>
-                    <button onClick={() => setWizardFilters({...wizardFilters, year: 'old'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.year === 'old' ? 'border-blue-500 bg-blue-600/20 text-blue-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>Nostalji (2010)</button>
-                    <button onClick={() => setWizardFilters({...wizardFilters, year: 'any'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.year === 'any' ? 'border-white bg-zinc-800 text-white' : 'border-zinc-700 bg-black text-zinc-300'}`}>Fark Etmez</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, year: 'new'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.year === 'new' ? 'border-blue-500 bg-blue-600/20 text-blue-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.yearNew}</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, year: '2010s'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.year === '2010s' ? 'border-blue-500 bg-blue-600/20 text-blue-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.year2010s}</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, year: 'old'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.year === 'old' ? 'border-blue-500 bg-blue-600/20 text-blue-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.yearOld}</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, year: 'any'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.year === 'any' ? 'border-white bg-zinc-800 text-white' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.anyOption}</button>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-bold text-zinc-500 mb-2 uppercase">Puan Skalası?</label>
+                  <label className="block text-sm font-bold text-zinc-500 mb-2 uppercase">{t.wizardRatingLabel}</label>
                   <div className="flex gap-2">
-                    <button onClick={() => setWizardFilters({...wizardFilters, rating: 'high'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.rating === 'high' ? 'border-yellow-500 bg-yellow-600/20 text-yellow-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>Başyapıt (+8.0)</button>
-                    <button onClick={() => setWizardFilters({...wizardFilters, rating: 'mid'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.rating === 'mid' ? 'border-yellow-500 bg-yellow-600/20 text-yellow-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>İzlenir (+6.0)</button>
-                    <button onClick={() => setWizardFilters({...wizardFilters, rating: 'any'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.rating === 'any' ? 'border-white bg-zinc-800 text-white' : 'border-zinc-700 bg-black text-zinc-300'}`}>Fark Etmez</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, rating: 'high'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.rating === 'high' ? 'border-yellow-500 bg-yellow-600/20 text-yellow-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.ratingHigh}</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, rating: 'mid'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.rating === 'mid' ? 'border-yellow-500 bg-yellow-600/20 text-yellow-500' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.ratingMid}</button>
+                    <button onClick={() => setWizardFilters({...wizardFilters, rating: 'any'})} className={`flex-1 py-3 rounded-lg border font-bold transition ${wizardFilters.rating === 'any' ? 'border-white bg-zinc-800 text-white' : 'border-zinc-700 bg-black text-zinc-300'}`}>{t.anyOption}</button>
                   </div>
                 </div>
 
                 <button onClick={handleWizardFind} className="w-full mt-6 bg-white text-black font-extrabold text-xl py-4 rounded-xl hover:bg-zinc-200 transition shadow-[0_0_20px_rgba(255,255,255,0.2)]">
-                  Film Bul 🎲
+                  {t.findMovieBtn}
                 </button>
               </div>
             )}
@@ -1759,19 +1759,19 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             {isWizardSpinning && (
               <div className="flex flex-col items-center justify-center py-20">
                 <div className="w-20 h-20 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-6"></div>
-                <h3 className="text-xl font-bold animate-pulse text-zinc-300">Kütüphanen Taranıyor...</h3>
+                <h3 className="text-xl font-bold animate-pulse text-zinc-300">{t.scanningLibrary}</h3>
               </div>
             )}
 
             {wizardResult && !isWizardSpinning && (
               <div className="flex flex-col items-center animate-in zoom-in duration-500">
-                <h3 className="text-xl text-green-400 font-bold mb-6">Bunu İzlemelisin! 👇</h3>
+                <h3 className="text-xl text-green-400 font-bold mb-6">{t.mustWatchThis}</h3>
                 <div className="w-48 cursor-pointer hover:scale-105 transition" onClick={() => { setIsWizardOpen(false); setSelectedMovie(wizardResult); }}>
                   <MovieCardFallback movie={wizardResult} />
                 </div>
                 <div className="flex gap-4 mt-8 w-full">
-                  <button onClick={() => { setIsWizardOpen(false); setSelectedMovie(wizardResult); startPlayer(wizardResult); }} className="flex-1 bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-700 transition">Hemen Aç</button>
-                  <button onClick={handleWizardFind} className="flex-1 bg-zinc-800 text-white font-bold py-3 rounded-xl hover:bg-zinc-700 transition border border-zinc-700">Tekrar Çevir</button>
+                  <button onClick={() => { setIsWizardOpen(false); setSelectedMovie(wizardResult); startPlayer(wizardResult); }} className="flex-1 bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-700 transition">{t.openNowWizardBtn}</button>
+                  <button onClick={handleWizardFind} className="flex-1 bg-zinc-800 text-white font-bold py-3 rounded-xl hover:bg-zinc-700 transition border border-zinc-700">{t.tryAgainBtn}</button>
                 </div>
               </div>
             )}
@@ -1793,13 +1793,13 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
             
             <div className="flex-1 text-center md:text-left mt-4 md:mt-10">
               <h2 className="text-5xl md:text-7xl font-black text-white tracking-tight drop-shadow-lg">{personModal.name}</h2>
-              <p className="text-zinc-400 text-lg md:text-xl font-medium mt-4">Kütüphanendeki eşleşen yapımlar aşağıda listeleniyor.</p>
+              <p className="text-zinc-400 text-lg md:text-xl font-medium mt-4">{t.actorDiscoveryDesc}</p>
             </div>
           </div>
 
           <div className="max-w-7xl mx-auto w-full mt-16">
             <h3 className="text-2xl font-bold mb-6 flex items-center gap-3">
-              <span className="w-8 h-1 bg-red-600 rounded"></span> Oynadığı/Yönettiği Filmler
+              <span className="w-8 h-1 bg-red-600 rounded"></span> {t.filmographyHeading}
             </h3>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 pb-20">
               {movies.filter(m => m.actors?.includes(personModal.name) || m.director?.includes(personModal.name)).map(m => (
@@ -1816,10 +1816,10 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
       {showNameModal && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/90 backdrop-blur-md px-4">
           <div className="w-full max-w-md rounded-2xl bg-zinc-900 p-8 shadow-2xl border border-zinc-800 text-center">
-            <h2 className="text-2xl font-bold mb-2">👋 Adın Ne Kanka?</h2>
-            <p className="text-zinc-400 text-sm mb-6">Party chatte arkadaşının seni tanıyabilmesi için bir isim gir.</p>
-            <input 
-              type="text" placeholder="Örn: tekin" 
+            <h2 className="text-2xl font-bold mb-2">{t.askNameHeading}</h2>
+            <p className="text-zinc-400 text-sm mb-6">{t.askNameDesc}</p>
+            <input
+              type="text" placeholder={t.namePlaceholder}
               onKeyDown={(e) => {
                 if(e.key === 'Enter' && (e.target as HTMLInputElement).value.trim()) {
                   const name = (e.target as HTMLInputElement).value.trim();
@@ -1839,7 +1839,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
                 setShowNameModal(false);
               }
             }} className="w-full rounded-xl bg-red-600 py-3 font-bold hover:bg-red-700 transition">
-              Devam Et 🚀
+              {t.continueBtn}
             </button>
           </div>
           
@@ -1860,6 +1860,7 @@ const [profiles, setProfiles] = useState<{id: string, name: string, color: strin
           onSeek={handleSeekPlayer}
           formatTime={formatTime}
           companionName={theaterCompanionName}
+          t={t}
         />
       )}
     </div>
