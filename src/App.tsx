@@ -4,6 +4,14 @@ import Peer, { DataConnection, MediaConnection } from "peerjs";
 // @ts-ignore
 import WebTorrent from 'webtorrent/dist/webtorrent.min.js';
 import VirtualTheater from './VirtualTheater';
+import XRayOverlay from "./components/XRayOverlay";
+import TriviaGame from "./components/TriviaGame";
+import AchievementsModal, { checkAchievements } from "./components/AchievementsModal";
+import ClipperModal from "./components/ClipperModal";
+import SoundtrackRadar from "./components/SoundtrackRadar";
+import SocialTimeMachine from "./components/SocialTimeMachine";
+import FourthWallEngine from "./components/FourthWallEngine";
+import { useAudioReactiveSubs } from "./hooks/useAudioReactiveSubs";
 
 import { isTV, isWeb } from "./utils/platform";
 import { shuffleArray, generateLocalShortCode, normalizePath } from "./utils/helpers";
@@ -12,6 +20,7 @@ import { HeroBanner } from "./components/HeroBanner";
 import { MovieRow } from "./components/MovieRow";
 import { useParty } from "./hooks/useParty";
 import { usePlayer } from "./hooks/usePlayer";
+import { useAmbilight } from "./hooks/useAmbilight";
 import type { SortOption, TabState, Lang, SubtitleTrack, ChatMessage } from "./types/app";
 import { dict } from "./i18n";
 
@@ -64,9 +73,11 @@ function App() {
   const [localSubs, setLocalSubs] = useState<SubtitleTrack[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const ambilightColor = useAmbilight(videoRef, isPlaying, true);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null); 
+  const latestHoverWordRef = useRef<string | null>(null);
   
   // FaceCam Ref'leri
   const localCamRef = useRef<HTMLVideoElement>(null);
@@ -133,7 +144,7 @@ function App() {
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   
-  // YENİ: Video Görüntü Ayarları (Parlaklık, Kontrast, Doygunluk)
+  // Video Settings
   const [videoFilters, setVideoFilters] = useState({ brightness: 1, contrast: 1, saturation: 1 });
   const [showVideoSettings, setShowVideoSettings] = useState(false);
 
@@ -162,7 +173,8 @@ function App() {
   const [subSettings, setSubSettings] = useState({
     color: localStorage.getItem("kinflix_sub_color") || "text-white",
     size: localStorage.getItem("kinflix_sub_size") || "2.4vw",
-    bg: localStorage.getItem("kinflix_sub_bg") || "text-shadow"
+    bg: localStorage.getItem("kinflix_sub_bg") || "text-shadow",
+    style: localStorage.getItem("kinflix_sub_style") || "classic"
   });
 
   const updateSubSetting = (key: string, val: string) => {
@@ -170,6 +182,8 @@ function App() {
     setSubSettings(newSettings);
     localStorage.setItem("kinflix_sub_"+key, val);
   };
+
+  const kineticAudioScale = useAudioReactiveSubs(videoRef, subSettings.style === 'kinetic');
 
   const [personModal, setPersonModal] = useState<{name: string, photoUrl: string | null} | null>(null);
 
@@ -190,6 +204,16 @@ function App() {
 
   const [themeColor, setThemeColor] = useState(localStorage.getItem("kinflix_theme") || "red");
 
+  const [isAchievementsOpen, setIsAchievementsOpen] = useState(false);
+  const [isClipperOpen, setIsClipperOpen] = useState(false);
+  const [isSoundtrackOpen, setIsSoundtrackOpen] = useState(false);
+  const [showExtraControls, setShowExtraControls] = useState(false);
+  
+  // DENEYSEL ÖZELLİKLER (Experimental)
+  const [expSocial, setExpSocial] = useState(false);
+  const [expFourthWall, setExpFourthWall] = useState(false);
+  const [expLUT, setExpLUT] = useState("none");
+  
   const [isPartyMenuOpen, setIsPartyMenuOpen] = useState(isWeb); 
   const [peerId, setPeerId] = useState<string>(""); 
   const [localIp, setLocalIp] = useState<string>(""); 
@@ -671,6 +695,43 @@ function App() {
             if (metadata) {
               await updateMovieMetadata(movie.video_path, metadata);
               successCount++;
+              
+              // YENİ: OTOMATİK ALTYAZI ROBOTU (Auto-Sub Fetcher)
+              if (!isWeb) {
+                try {
+                  const metaUrl = `https://v3-cinemeta.strem.io/catalog/movie/top/search=${encodeURIComponent(cleanTitle)}.json`;
+                  const metaRes = await window.fetch(metaUrl);
+                  const metaData = await metaRes.json();
+                  
+                  let imdbId = null;
+                  if (metaData.metas && metaData.metas.length > 0) {
+                    const match = movie.year ? metaData.metas.find((m:any) => m.year == movie.year) || metaData.metas[0] : metaData.metas[0];
+                    imdbId = match.imdb_id || match.id;
+                  }
+                  
+                  if (imdbId) {
+                    const subRes = await window.fetch(`https://opensubtitles-v3.strem.io/subtitles/movie/${imdbId}.json`);
+                    const subData = await subRes.json();
+                    if (subData && subData.subtitles) {
+                      // Öncelik Türkçe, yoksa İngilizce
+                      let bestSub = subData.subtitles.find((s:any) => s.lang === "tur" || s.lang === "tr");
+                      if (!bestSub) bestSub = subData.subtitles.find((s:any) => s.lang === "eng" || s.lang === "en");
+                      
+                      if (bestSub) {
+                        const dlRes = await window.fetch(bestSub.url);
+                        const subContent = await dlRes.text();
+                        const { invoke } = await import("@tauri-apps/api/core");
+                        await invoke("save_subtitle_file", {
+                          videoPath: movie.video_path,
+                          content: subContent,
+                          lang: bestSub.lang || "tr"
+                        });
+                      }
+                    }
+                  }
+                } catch(e) { /* Sessizce yut, taramayı bozmasın */ }
+              }
+
             } else {
               failCount++;
             }
@@ -847,11 +908,9 @@ function App() {
   // YENİ: Altyazı Kelime Çeviri Mantığı
   const handleWordHover = async (word: string, e: React.MouseEvent) => {
     // Kelimeyi temizle (noktalama işaretlerini at)
-    const cleanWord = word.replace(/[^a-zA-ZçğıöşüÇĞIÖŞÜ]/g, '').toLowerCase();
+    const cleanWord = word.replace(/[^a-zA-ZçÇğĞıİöÖşŞüÜ]/g, '').toLowerCase();
     if (!cleanWord || cleanWord.length < 2) return;
 
-    // Sadece İngilizce -> Türkçe çeviri yapalım (Stremio'dan genelde ingilizce indiriliyor)
-    // Eğer film oynuyorsa, duraklat ki kullanıcı okuyabilsin
     if (isVideoPlaying && videoRef.current) {
       videoRef.current.pause();
       setIsVideoPlaying(false);
@@ -859,23 +918,29 @@ function App() {
     }
 
     const rect = (e.target as HTMLElement).getBoundingClientRect();
+    latestHoverWordRef.current = cleanWord;
     setHoveredWord({ word: cleanWord, translation: "Çevriliyor...", x: rect.left + rect.width / 2, y: rect.top - 10, loading: true });
 
     try {
-      // Ücretsiz ve limitsiz MyMemory API'si (Saniye başı çok istek atılırsa blocklanabilir ama hover için ideal)
-      const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanWord)}&langpair=en|tr`);
+      // Daha kaliteli ve stabil çeviri için Google Translate API (Ücretsiz endpoint)
+      const res = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=tr&dt=t&q=${encodeURIComponent(cleanWord)}`);
       const data = await res.json();
-      const translation = data.responseData.translatedText;
+      const translation = data[0][0][0];
       
-      setHoveredWord({
-        word: cleanWord,
-        translation: translation,
-        x: rect.left + rect.width / 2,
-        y: rect.top - 10,
-        loading: false
-      });
+      // Eğer kullanıcı fareyi çekmemişse (hala aynı kelimedeyse) göster
+      if (latestHoverWordRef.current === cleanWord) {
+        setHoveredWord({
+          word: cleanWord,
+          translation: translation,
+          x: rect.left + rect.width / 2,
+          y: rect.top - 10,
+          loading: false
+        });
+      }
     } catch (err) {
-      setHoveredWord({ word: cleanWord, translation: "Çevrilemedi", x: rect.left + rect.width / 2, y: rect.top - 10, loading: false });
+      if (latestHoverWordRef.current === cleanWord) {
+        setHoveredWord(null);
+      }
     }
   };
 
@@ -1183,8 +1248,11 @@ function App() {
           </nav>
         </div>
         <div className="flex items-center gap-3">
+          <button onClick={() => setIsAchievementsOpen(true)} className="flex items-center gap-2 rounded bg-yellow-600/80 px-4 py-2 text-sm font-bold text-yellow-100 backdrop-blur transition hover:bg-yellow-700">
+            🏆 Başarımlar
+          </button>
           <button onClick={() => setIsPartyMenuOpen(true)} className={`flex items-center gap-2 rounded px-4 py-2 text-sm font-bold backdrop-blur transition ${partyStatus === 'connected' ? 'bg-green-600/80 hover:bg-green-700' : 'bg-zinc-800/80 hover:bg-zinc-700'}`}>
-            🎉 {partyStatus === 'connected' ? (isHost ? t.roomCreated : t.guestModeShort) : t.party}
+            👥 {partyStatus === 'connected' ? (isHost ? t.roomCreated : t.guestModeShort) : t.party}
           </button>
           {isHost && movies.length > 0 && !isWeb && (
             <button onClick={() => syncMovieMetadata()} disabled={syncing} className="rounded bg-zinc-800/80 px-4 py-2 text-sm font-bold backdrop-blur transition hover:bg-zinc-700 disabled:opacity-50">
@@ -1347,9 +1415,19 @@ function App() {
                   </div>
                   
                   {partyStatus === 'connected' && (
-                     <button onClick={disconnectParty} className="mt-4 w-full rounded bg-red-600/20 py-3 text-red-500 font-bold hover:bg-red-600/40 border border-red-900/50 transition">
-                       {t.leaveRoom}
-                     </button>
+                    <>
+                       <button onClick={disconnectParty} className="mt-4 w-full rounded bg-red-600/20 py-3 text-red-500 font-bold hover:bg-red-600/40 border border-red-900/50 transition">
+                         {t.leaveRoom}
+                       </button>
+                       <button onClick={() => {
+                          const payload = { action: "trivia_start", qIndex: 0 };
+                          broadcastEvent("trivia_start", payload);
+                          window.dispatchEvent(new CustomEvent('kinflix_party_event', { detail: payload }));
+                          setIsPartyMenuOpen(false);
+                       }} className="mt-2 w-full rounded bg-indigo-600/20 py-3 text-indigo-400 font-bold hover:bg-indigo-600/40 border border-indigo-900/50 transition flex items-center justify-center gap-2">
+                         <span>🎮</span> Sinema Trivia Başlat
+                       </button>
+                    </>
                   )}
                 </>
               ) : (
@@ -1943,7 +2021,8 @@ function App() {
           onClick={() => {if(showSubMenu) setShowSubMenu(false); if(showSpeedMenu) setShowSpeedMenu(false);}} 
           onDoubleClick={handlePlayerDoubleClick}
           onWheel={handlePlayerWheel}
-          className={`fixed inset-0 z-[100] bg-black flex flex-col group ${showControls ? "controls-visible" : "controls-hidden"}`}
+          className={`fixed inset-0 z-[100] bg-black flex flex-col group transition-all duration-1000 ${showControls ? "controls-visible" : "controls-hidden"}`}
+          style={{ boxShadow: isPlaying ? `inset 0 0 250px ${ambilightColor}` : 'none' }}
         >
           {/* 3D SİNEMA VE YOUTUBE İFRAME YÖNETİMİ */}
           {isVirtualTheaterOpen ? (
@@ -2002,6 +2081,20 @@ function App() {
                   broadcastEvent("sync_time", { time: cTime, duration: safeDuration });
                 }
               }
+
+              // YENİ: Kupa Sistemi Takibi
+                if (cTime > 0 && e.currentTarget.duration && (e.currentTarget.duration - cTime) < 2) {
+                 if (!(window as any)._movieFinishedTracked) {
+                    (window as any)._movieFinishedTracked = true;
+                    const unlocked = checkAchievements("movie_finish", selectedMovieRef.current);
+                    unlocked.forEach(() => showToast(`🏆 Yeni Başarım Açıldı!`, "✨"));
+                 }
+              }
+              if (Math.floor(cTime) > 0 && Math.floor(cTime) % 60 === 0 && Math.floor(cTime) !== (window as any)._lastTrackedSec) {
+                 (window as any)._lastTrackedSec = Math.floor(cTime);
+                 const unlocked = checkAchievements("watch_tick", 60);
+                 unlocked.forEach(() => showToast(`🏆 Yeni Başarım Açıldı!`, "✨"));
+              }
             }}
             onLoadedMetadata={(e) => { 
               if (isRemoteStreaming && !isHostRef.current) return;
@@ -2019,44 +2112,87 @@ function App() {
             className="h-full w-full object-contain cursor-pointer absolute inset-0"
             style={{ 
               opacity: (isVirtualTheaterOpen || selectedMovie.video_path.startsWith('yt-')) ? '0.01' : '1',
-              filter: `brightness(${videoFilters.brightness}) contrast(${videoFilters.contrast}) saturate(${videoFilters.saturation})`
+              filter: `brightness(${videoFilters.brightness}) contrast(${videoFilters.contrast}) saturate(${videoFilters.saturation}) ${
+                expLUT === 'matrix' ? 'sepia(100%) hue-rotate(90deg) saturate(200%) brightness(80%)' :
+                expLUT === 'madmax' ? 'sepia(50%) saturate(200%) contrast(120%) hue-rotate(-15deg)' :
+                expLUT === 'sincity' ? 'grayscale(100%) contrast(200%)' :
+                expLUT === 'cyberpunk' ? 'saturate(300%) hue-rotate(45deg) contrast(150%)' : ''
+              }`
             }}
           />
+
+          <XRayOverlay videoRef={videoRef} tmdbId={selectedMovie?.tmdb_id || null} title={selectedMovie?.title} year={selectedMovie?.year} isPaused={!isPlaying && showControls} />
+          <TriviaGame 
+            broadcastEvent={(action, payload) => {
+              broadcastEvent(action, payload);
+              window.dispatchEvent(new CustomEvent('kinflix_party_event', { detail: { action, ...payload } }));
+            }} 
+            isHost={isHost} 
+            localName={isHost ? (profiles.find(p => p.id === activeProfile)?.name || "Host") : guestName} 
+          />
+          <AchievementsModal isOpen={isAchievementsOpen} onClose={() => setIsAchievementsOpen(false)} />
+          <ClipperModal isOpen={isClipperOpen} onClose={() => setIsClipperOpen(false)} videoRef={videoRef} />
+          <SoundtrackRadar isOpen={isSoundtrackOpen} onClose={() => setIsSoundtrackOpen(false)} movieTitle={selectedMovie?.title} />
+
+          <SocialTimeMachine isActive={expSocial} currentTime={currentTime} duration={duration} />
+          <FourthWallEngine isActive={expFourthWall} isPlaying={isVideoPlaying} genre={selectedMovie?.genres || ''} />
 
           {/* ALTYAZILAR */}
           {activeSubIndex >= 0 && localSubs[activeSubIndex] && !selectedMovie.video_path.startsWith('yt-') && (
             <div className={`absolute left-0 right-0 z-[100000] flex flex-col items-center justify-end pointer-events-none transition-all duration-300 ${showControls ? 'bottom-32' : 'bottom-12'}`}>
               {localSubs[activeSubIndex].cues
                 .filter(c => currentTime >= c.start && currentTime <= c.end)
-                .map((c, i) => (
+                .map((c, i) => {
+                  const lines = c.text.split('\n');
+                  const lineWordCounts = lines.map(l => l.split(' ').length);
+                  const totalWords = lineWordCounts.reduce((a, b) => a + b, 0);
+                  const isTikTok = subSettings.style === 'tiktok';
+                  const isKinetic = subSettings.style === 'kinetic';
+                  const progress = Math.max(0, Math.min(1, (currentTime - c.start) / (c.end - c.start)));
+                  const globalActiveIndex = Math.floor(progress * totalWords);
+                  const isLoud = isTikTok && c.text === c.text.toUpperCase() && c.text.match(/[a-zA-Z]/) !== null;
+
+                  return (
                   <div key={i} className="text-center mb-1">
-                    {c.text.split('\n').map((line, j) => (
+                    {lines.map((line, j) => {
+                      const words = line.split(' ');
+                      const startGlobalIndex = lineWordCounts.slice(0, j).reduce((a, b) => a + b, 0);
+
+                      return (
                       <div 
                         key={j} 
-                        className={`inline-block font-bold leading-tight ${subSettings.color} pointer-events-auto`} 
+                        className={`inline-block font-bold leading-tight ${subSettings.color} pointer-events-auto ${isTikTok && isLoud ? 'animate-shake text-red-500' : ''}`} 
                         style={{ 
-                          fontSize: subSettings.size,
-                          textShadow: subSettings.bg === 'text-shadow' ? '0px 0px 6px black, 0px 0px 12px black' : 'none',
+                          fontSize: isTikTok && isLoud ? `calc(${subSettings.size} * 1.3)` : subSettings.size,
+                          textShadow: subSettings.bg === 'text-shadow' ? (isTikTok && isLoud ? '0px 0px 15px red' : '0px 0px 6px black, 0px 0px 12px black') : 'none',
                           backgroundColor: subSettings.bg === 'solid' ? 'rgba(0,0,0,0.8)' : 'transparent',
                           padding: subSettings.bg === 'solid' ? '2px 10px' : '0',
-                          borderRadius: subSettings.bg === 'solid' ? '8px' : '0'
+                          borderRadius: subSettings.bg === 'solid' ? '8px' : '0',
+                          transform: isKinetic ? `scale(${kineticAudioScale})` : 'none',
+                          filter: isKinetic && kineticAudioScale > 1.1 ? `blur(${(kineticAudioScale - 1) * 3}px) drop-shadow(0 0 10px ${subSettings.color.replace('text-', '')})` : 'none',
+                          transition: 'transform 50ms ease-out, filter 50ms ease-out'
                         }}
-                        onMouseLeave={() => setHoveredWord(null)}
+                        onMouseLeave={() => { latestHoverWordRef.current = null; setHoveredWord(null); }}
                       >
-                        {line.split(' ').map((word, k) => (
+                        {words.map((word, k) => {
+                          const myGlobalIndex = startGlobalIndex + k;
+                          const isActive = isTikTok && myGlobalIndex === globalActiveIndex;
+                          const isPast = isTikTok && myGlobalIndex < globalActiveIndex;
+
+                          return (
                           <span 
                             key={k} 
                             onMouseEnter={(e) => handleWordHover(word, e)}
-                            className="cursor-help hover:text-yellow-400 transition"
+                            className={`cursor-help transition-all duration-100 inline-block ${isTikTok ? (isActive ? 'scale-110 text-yellow-400 font-black drop-shadow-md' : isPast ? 'opacity-90' : 'opacity-50') : 'hover:text-yellow-400'}`}
+                            style={{ marginRight: isTikTok ? '0.3em' : '0' }}
                           >
-                            {word}{" "}
+                            {word}{isTikTok ? '' : ' '}
                           </span>
-                        ))}
+                        )})}
                       </div>
-                    ))}
+                    )})}
                   </div>
-                ))
-              }
+                )})}
             </div>
           )}
 
@@ -2207,20 +2343,38 @@ function App() {
                   )}
                 </div>
 
+                <div className={`flex items-center gap-4 transition-all duration-300 overflow-hidden ${showExtraControls ? 'max-w-[400px] opacity-100 px-2' : 'max-w-0 opacity-0 px-0'}`}>
+                  <button 
+                    onClick={toggleVoiceBoost} 
+                    className={`text-xl font-bold transition group relative mt-1 ${isVoiceBoosted ? 'text-blue-500' : 'text-zinc-300 hover:text-white'}`}
+                    title={t.voiceBoostTitle}
+                  >
+                    <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 24 24" height="1.2em" width="1.2em" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"></path>
+                    </svg>
+                    {isVoiceBoosted && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span></span>}
+                  </button>
+
+                  <button onClick={(e) => {e.stopPropagation(); setIsSoundtrackOpen(true);}} className="text-xl font-bold text-zinc-300 hover:text-emerald-400 transition hover:scale-110" title="Soundtrack Radar (Şarkıyı Bul)">🎵</button>
+
+                  <button onClick={(e) => {e.stopPropagation(); window.dispatchEvent(new CustomEvent('kinflix_party_event', { detail: { action: 'toggle_xray' } }));}} className="text-xl font-bold text-zinc-300 hover:text-white transition hover:scale-110" title="X-Ray (Oyuncular)">🔍</button>
+
+                  <button onClick={(e) => {e.stopPropagation(); setIsClipperOpen(true);}} className="text-xl font-bold text-zinc-300 hover:text-white transition hover:scale-110" title="Meme / Klip Al (Kinflix Clipper)">✂️</button>
+
+                  <button onClick={(e) => {e.stopPropagation(); takeScreenshot();}} className="text-xl font-bold text-zinc-300 hover:text-white transition hover:scale-110" title="Ekran Görüntüsü Al">📸</button>
+
+                  <button onClick={(e) => {e.stopPropagation(); setShowVideoSettings(!showVideoSettings); setShowSubMenu(false); setShowSpeedMenu(false);}} className="text-xl font-bold text-zinc-300 hover:text-white transition" title="Görüntü Ayarları">🎨</button>
+                </div>
+
                 <button 
-                  onClick={toggleVoiceBoost} 
-                  className={`text-xl font-bold transition group relative mt-1 ${isVoiceBoosted ? 'text-blue-500' : 'text-zinc-300 hover:text-white'}`}
-                  title={t.voiceBoostTitle}
+                  onClick={(e) => {e.stopPropagation(); setShowExtraControls(!showExtraControls);}} 
+                  className={`text-zinc-500 hover:text-white transition transform ${showExtraControls ? 'rotate-180' : ''}`}
+                  title="Ekstra Araçlar"
                 >
-                  <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 24 24" height="1.2em" width="1.2em" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"></path>
+                  <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 24 24" height="1.5em" width="1.5em" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z"></path>
                   </svg>
-                  {isVoiceBoosted && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span></span>}
                 </button>
-
-                <button onClick={(e) => {e.stopPropagation(); takeScreenshot();}} className="text-xl font-bold text-zinc-300 hover:text-white transition hover:scale-110" title="Ekran Görüntüsü Al">📸</button>
-
-                <button onClick={(e) => {e.stopPropagation(); setShowVideoSettings(!showVideoSettings); setShowSubMenu(false); setShowSpeedMenu(false);}} className="text-xl font-bold text-zinc-300 hover:text-white transition" title="Görüntü Ayarları">🎨</button>
                 
                 {/* YENİ: Video Görüntü Ayarları Menüsü */}
                 {showVideoSettings && (
@@ -2239,6 +2393,42 @@ function App() {
                       <input type="range" min="0" max="3" step="0.1" value={videoFilters.saturation} onChange={(e) => setVideoFilters({...videoFilters, saturation: parseFloat(e.target.value)})} className="w-full accent-white" />
                     </div>
                     <button onClick={() => setVideoFilters({brightness: 1, contrast: 1, saturation: 1})} className="text-xs font-bold bg-zinc-800 hover:bg-zinc-700 text-white py-2 rounded mt-2">Sıfırla</button>
+                    
+                    <hr className="border-zinc-700 my-2" />
+                    <div className="text-[10px] font-black text-purple-400 uppercase tracking-widest flex items-center gap-1">
+                      <span>🧪</span> Deneysel (Experimental)
+                    </div>
+                    
+                    <div className="flex flex-col gap-2">
+                      <label onClick={() => setExpFourthWall(!expFourthWall)} className="flex items-center gap-2 cursor-pointer group">
+                        <div className={`w-10 h-5 rounded-full p-1 transition-colors ${expFourthWall ? 'bg-purple-500' : 'bg-zinc-700'}`}>
+                          <div className={`w-3 h-3 bg-white rounded-full transition-transform ${expFourthWall ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                        </div>
+                        <span className="text-xs font-bold text-zinc-300 group-hover:text-white transition">Matrix Modu (Dördüncü Duvar)</span>
+                      </label>
+                      
+                      <label onClick={() => setExpSocial(!expSocial)} className="flex items-center gap-2 cursor-pointer group">
+                        <div className={`w-10 h-5 rounded-full p-1 transition-colors ${expSocial ? 'bg-purple-500' : 'bg-zinc-700'}`}>
+                          <div className={`w-3 h-3 bg-white rounded-full transition-transform ${expSocial ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                        </div>
+                        <span className="text-xs font-bold text-zinc-300 group-hover:text-white transition">Sosyal Zaman Makinesi</span>
+                      </label>
+
+                      <div>
+                        <div className="text-xs text-zinc-400 mb-1">Gerçek Zamanlı LUT Filtresi</div>
+                        <select 
+                          value={expLUT} 
+                          onChange={(e) => setExpLUT(e.target.value)} 
+                          className="w-full bg-zinc-950 border border-zinc-700 text-xs text-white rounded p-1.5 outline-none cursor-pointer"
+                        >
+                          <option value="none">Kapalı</option>
+                          <option value="matrix">Matrix (Yeşil Tonlu)</option>
+                          <option value="madmax">Mad Max (Turuncu/Mavi)</option>
+                          <option value="sincity">Sin City (Siyah Beyaz/Kontrast)</option>
+                          <option value="cyberpunk">Cyberpunk 2077 (Neon)</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -2274,6 +2464,13 @@ function App() {
                         )}
                       </div>
                     ))}
+                    
+                    <div className="bg-zinc-800 px-4 py-2 mt-1 text-xs font-bold text-zinc-400 uppercase tracking-wider">Stil Ayarları</div>
+                    <div className="p-2 flex gap-2">
+                      <button onClick={(e) => { e.stopPropagation(); updateSubSetting('style', 'classic'); }} className={`flex-1 py-1.5 rounded text-[10px] font-bold ${subSettings.style === 'classic' ? 'bg-red-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Klasik</button>
+                      <button onClick={(e) => { e.stopPropagation(); updateSubSetting('style', 'tiktok'); }} className={`flex-1 py-1.5 rounded text-[10px] font-bold flex items-center justify-center gap-1 ${subSettings.style === 'tiktok' ? 'bg-[#00f2fe] text-black shadow-[0_0_10px_rgba(0,242,254,0.5)]' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>TikTok <span>💥</span></button>
+                      <button onClick={(e) => { e.stopPropagation(); updateSubSetting('style', 'kinetic'); }} className={`flex-1 py-1.5 rounded text-[10px] font-bold flex items-center justify-center gap-1 ${subSettings.style === 'kinetic' ? 'bg-[#8b5cf6] text-white shadow-[0_0_10px_rgba(139,92,246,0.5)]' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Kinetic <span>🎶</span></button>
+                    </div>
 
                     {!isTV && (
                       <>

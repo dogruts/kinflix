@@ -182,6 +182,9 @@ export function useParty(p: UsePartyParams) {
 
   useEffect(() => {
     networkHandlerRef.current = async (data: any) => {
+      // YENİ: Harici component'lerin (Trivia vs) dinleyebilmesi için event fırlat
+      window.dispatchEvent(new CustomEvent('kinflix_party_event', { detail: data }));
+      
       const hostMode = isHostRef.current;
 
       if (data.action === "network_info" && !hostMode && connModeRef.current === 'webrtc') {
@@ -470,6 +473,7 @@ export function useParty(p: UsePartyParams) {
       console.error("PeerJS Hatası:", err);
       if (err.type === 'unavailable-id' && !isWeb) {
         localStorage.removeItem("kinflix_host_code");
+        peer.destroy();
         initPeerHost();
         return;
       }

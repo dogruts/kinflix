@@ -22,7 +22,7 @@ export default defineConfig({
   build: {
     target: "chrome53",
 
-    chunkSizeWarningLimit: 2000,
+    chunkSizeWarningLimit: 5000,
 
     rollupOptions: {
       output: {
