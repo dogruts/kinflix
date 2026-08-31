@@ -493,7 +493,7 @@ export function usePlayer(p: UsePlayerParams) {
 
     setOsResults([]); setOsError(null); setSelectedMovie(movieToPlay); setIsPlaying(true); setIsVideoPlaying(true); setPlaybackSpeed(1);
 
-    if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.current === 'connected' && !movieToPlay.video_path.startsWith("torrent-")) {
+    if (connModeRef.current === 'webrtc' && isHostRef.current && partyStatusRef.current === 'connected' && !movieToPlay.video_path.startsWith("torrent-") && !movieToPlay.video_path.startsWith("yt-")) {
       const handlePlaying = async () => {
         if (connRef.current && videoRef.current && peerRef.current) {
            if (callRef.current) { callRef.current.close(); }
@@ -643,7 +643,7 @@ export function usePlayer(p: UsePlayerParams) {
   };
 
   const getSafeVideoSource = () => {
-    if (!selectedMovie || selectedMovie.video_path.startsWith("torrent-")) return "";
+    if (!selectedMovie || selectedMovie.video_path.startsWith("torrent-") || selectedMovie.video_path.startsWith("yt-")) return "";
     const isHevc = /265|hevc/i.test(selectedMovie.video_path);
 
     // MİSAFİR - HTTP MODU

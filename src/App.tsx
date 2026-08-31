@@ -1456,7 +1456,7 @@ function App() {
                    
                    <button onClick={() => {
                      if (partyStatus === 'connected') {
-                       broadcastEvent("request_catalog");
+                       broadcastEvent("request_catalog", { guestName: guestName || localStorage.getItem("kinflix_guest_name") || "Misafir" });
                      } else {
                        alert(t.mustBeConnectedFirst);
                      }
@@ -1945,16 +1945,14 @@ function App() {
                 👑 {isHostRef.current ? (profiles.find(p => p.id === activeProfile)?.name || t.youHostFallback) : hostName}
               </div>
               
-              {isHostRef.current ? (
-                connectedGuests.length > 0 ? (
-                  connectedGuests.map((guest, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm text-zinc-300 pl-4 border-l-2 border-zinc-700">
-                      👤 {guest.name}
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-xs text-zinc-600 italic pl-4">{t.nobodyJoinedYet}</div>
-                )
+              {connectedGuests.length > 0 ? (
+                connectedGuests.map((guest, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm text-zinc-300 pl-4 border-l-2 border-zinc-700">
+                    👤 {guest.name}
+                  </div>
+                ))
+              ) : isHostRef.current ? (
+                <div className="text-xs text-zinc-600 italic pl-4">{t.nobodyJoinedYet}</div>
               ) : (
                 <div className="flex items-center gap-2 text-sm text-zinc-300 pl-4 border-l-2 border-zinc-700">
                    👤 {guestName || localStorage.getItem("kinflix_guest_name") || t.youFallback}

@@ -116,6 +116,7 @@ export function useParty(p: UsePartyParams) {
 
   const saveChatMessage = (msg: ChatMessage) => {
     setChatMessages(prev => {
+      if (prev.some(m => m.id === msg.id)) return prev;
       const newChat = [...prev, msg];
       localStorage.setItem("kinflix_chat_history", JSON.stringify(newChat));
       return newChat;
@@ -231,8 +232,9 @@ export function useParty(p: UsePartyParams) {
       else if (data.action === "request_catalog" && hostMode) {
         if (data.guestName) {
            setConnectedGuests(prev => {
-              if (!prev.find(g => g.name === data.guestName)) return [...prev, {id: Date.now().toString(), name: data.guestName}];
-              return prev;
+              const newList = prev.find(g => g.name === data.guestName) ? prev : [...prev, {id: Date.now().toString(), name: data.guestName}];
+              setTimeout(() => broadcastEvent("guest_list_update", { guests: newList }), 500);
+              return newList;
            });
            showToast(`${data.guestName} ${t.guestJoinedSuffix}`, "👋");
         } else {
@@ -263,6 +265,9 @@ export function useParty(p: UsePartyParams) {
       else if (data.action === "catalog" && !hostMode) {
         setMovies(data.catalog);
         if (data.hostName) setHostName(data.hostName);
+      }
+      else if (data.action === "guest_list_update" && !hostMode) {
+        setConnectedGuests(data.guests);
       }
       else if (data.action === "request_movie" && hostMode) {
         startPlayerRef.current(data.movie);
