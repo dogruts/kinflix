@@ -152,6 +152,9 @@ export default function VirtualTheater({
     scene.add(screenLight);
 
     let videoTexture: THREE.VideoTexture | null = null;
+    let canvas: HTMLCanvasElement | null = null;
+    let ctx: CanvasRenderingContext2D | null = null;
+
     if (!isYouTube) {
       videoTexture = new THREE.VideoTexture(videoElement);
       videoTexture.colorSpace = THREE.SRGBColorSpace;
@@ -160,6 +163,12 @@ export default function VirtualTheater({
       screen.position.set(0, 4, -34); 
       scene.add(screen);
       videoElement.style.opacity = '0.01';
+
+      // Setup Canvas for Ambilight
+      canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 36;
+      ctx = canvas.getContext('2d', { willReadFrequently: true });
     } else {
       const videoContainer = document.createElement('div');
       videoContainer.style.width = '1920px';
@@ -176,13 +185,32 @@ export default function VirtualTheater({
     }
 
     let animationId: number;
-    const animate = () => {
+    let lastLightUpdate = 0;
+    
+    const animate = (time: number) => {
       animationId = requestAnimationFrame(animate);
       camera.rotation.set(drag.current.pitch, drag.current.yaw, 0, 'YXZ');
       renderer.render(scene, camera);
       if (isYouTube) cssRenderer.render(cssScene, camera);
+
+      // Ambilight effect (update 10 times a second)
+      if (!isYouTube && ctx && canvas && time - lastLightUpdate > 100) {
+        lastLightUpdate = time;
+        try {
+          ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const data = imageData.data;
+          let r = 0, g = 0, b = 0;
+          for (let i = 0; i < data.length; i += 16) {
+            r += data[i]; g += data[i+1]; b += data[i+2];
+          }
+          const count = data.length / 16;
+          const targetColor = new THREE.Color(`rgb(${Math.floor(r/count)}, ${Math.floor(g/count)}, ${Math.floor(b/count)})`);
+          screenLight.color.lerp(targetColor, 0.1);
+        } catch (e) {}
+      }
     };
-    animate();
+    requestAnimationFrame(animate);
 
     const handleResize = () => {
       camera.aspect = window.innerWidth / window.innerHeight;

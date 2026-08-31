@@ -75,7 +75,11 @@ export const dict = {
     hevcConfirmDialog: "Bu film H265 (HEVC) formatında!\n\nTAMAM: Ekranı Paylaş (Siyah ekran sorununu çözer)\nİPTAL: Normal devam et",
     watchlistRemovedToast: "Film bitti, listeden çıkarıldı.", movieNotFoundOnCinemeta: "Bulunamadı.", subtitleDownloadFailed: "Altyazı indirilemedi.",
     subtitleAppearance: "Altyazı Görünümü", enjoyTheShow: "Arkanıza yaslanın ve filmin tadını çıkarın!",
-    aiGeneratedLabel: "AI Üretimi", localSubtitleLabel: "Yerel Altyazı"
+    aiGeneratedLabel: "AI Üretimi", localSubtitleLabel: "Yerel Altyazı",
+    tmdbTranslatingTr: "TMDB Türkçeye çevriliyor...", tmdbTranslatingEn: "İngilizce TMDB çekiliyor...",
+    createOwnRoomTitle: "Kendi Odanı Kur", createOwnRoomDesc: "Arkadaşlarını davet etmek için bir parti odası başlat.", createRoomBtn: "Oda Kur",
+    joinRoomTitle: "Odaya Katıl", joinRoomDesc: "Arkadaşının sana gönderdiği kodu veya IP adresini gir.",
+    connectingLabel: "Bağlanıyor...", pleaseWaitLabel: "Lütfen bekleyin.", leaveOrCloseRoom: "Odadan Çık / Odayı Kapat"
   },
   en: {
     home: "Home", library: "All Movies", collections: "Collections", watchlistTab: "Watchlist", sync: "Sync TMDB", addLib: "+ Add Library",
@@ -151,6 +155,10 @@ export const dict = {
     hevcConfirmDialog: "This movie is in H265 (HEVC) format!\n\nOK: Share Screen (fixes the black screen issue)\nCancel: Continue normally",
     watchlistRemovedToast: "Movie finished, removed from your watchlist.", movieNotFoundOnCinemeta: "Not found.", subtitleDownloadFailed: "Couldn't download subtitle.",
     subtitleAppearance: "Subtitle Appearance", enjoyTheShow: "Sit back and enjoy the show!",
-    aiGeneratedLabel: "AI Generated", localSubtitleLabel: "Local Subtitle"
+    aiGeneratedLabel: "AI Generated", localSubtitleLabel: "Local Subtitle",
+    tmdbTranslatingTr: "Translating TMDB to Turkish...", tmdbTranslatingEn: "Fetching TMDB in English...",
+    createOwnRoomTitle: "Create Your Room", createOwnRoomDesc: "Start a party room to invite your friends.", createRoomBtn: "Create Room",
+    joinRoomTitle: "Join a Room", joinRoomDesc: "Enter the code or IP address your friend sent you.",
+    connectingLabel: "Connecting...", pleaseWaitLabel: "Please wait.", leaveOrCloseRoom: "Leave / Close Room"
   }
 } satisfies Record<Lang, Record<string, string>>;

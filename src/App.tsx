@@ -620,7 +620,12 @@ function App() {
   const handleSaveLang = async (val: Lang) => { 
     setLang(val); 
     if(!isWeb) await setSetting("language", val); 
-    else localStorage.setItem("kinflix_language", val); 
+    localStorage.setItem("kinflix_language", val); 
+    
+    if (tmdbToken) {
+      showToast(val === "tr" ? dict.tr.tmdbTranslatingTr : dict.en.tmdbTranslatingEn, "🔄");
+      syncMovieMetadata(true, true, val);
+    }
   };
   const handleSaveToken = async (val: string) => { setTmdbToken(val); if(!isWeb) await setSetting("tmdb_token", val); };
 
@@ -678,7 +683,7 @@ function App() {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [scanning, isWeb]);
 
-  async function syncMovieMetadata(silent = false) {
+  async function syncMovieMetadata(silent = false, forceAll = false, overrideLang?: string) {
     if (syncing || isWeb) return;
     if (!tmdbToken) { 
       if (!silent) setIsSettingsOpen(true); 
@@ -688,16 +693,18 @@ function App() {
     if (!silent) setError(null);
     try {
       const storedMovies = await getMovies(activeProfile || "default");
-      const pendingMovies = storedMovies.filter(m => !m.overview || m.overview.trim() === "");
+      const pendingMovies = forceAll ? storedMovies : storedMovies.filter(m => !m.overview || m.overview.trim() === "");
       if (silent && pendingMovies.length === 0) {
         setSyncing(false);
         return; // Sessiz modda güncellenecek yoksa direkt çık
       }
-      const targetMovies = pendingMovies.length > 0 ? pendingMovies : storedMovies;
+      const targetMovies = pendingMovies.length > 0 ? pendingMovies : (forceAll ? storedMovies : []);
+      if (targetMovies.length === 0) { setSyncing(false); return; }
 
       let successCount = 0;
       let failCount = 0;
       const batchSize = 5;
+      const currentLang = overrideLang || lang;
 
       for (let i = 0; i < targetMovies.length; i += batchSize) {
         const batch = targetMovies.slice(i, i + batchSize);
@@ -709,7 +716,7 @@ function App() {
               .replace(/[-_.]/g, ' ')
               .trim();
             
-            const metadata = await getMovieMetadata(cleanTitle, movie.year, tmdbToken, lang);
+            const metadata = await getMovieMetadata(cleanTitle, movie.year, tmdbToken, currentLang);
             if (metadata) {
               await updateMovieMetadata(movie.video_path, metadata);
               successCount++;
@@ -2065,7 +2072,8 @@ function App() {
           ) : selectedMovie.video_path.startsWith('yt-') ? (
              <div className="absolute inset-0 w-full h-full bg-black z-0 flex items-center justify-center">
                 <iframe
-                   src={`https://www.youtube.com/embed/${selectedMovie.video_path.split('-')[1]}?autoplay=1&enablejsapi=1&controls=1`}
+                   id="yt-player"
+                   src={`https://www.youtube.com/embed/${selectedMovie.video_path.split('-')[1]}?autoplay=1&enablejsapi=1&controls=0`}
                    className="w-full h-full"
                    frameBorder="0"
                    allow="autoplay; fullscreen"

@@ -312,12 +312,24 @@ fn scan_movies(path: String) -> Result<Vec<serde_json::Value>, String> {
                     let bracket_regex = Regex::new(r"(\[.*?\]|\(.*?\))").unwrap();
                     clean_title = bracket_regex.replace_all(&clean_title, "").trim().to_string();
 
+                    let mut local_poster = String::new();
+                    if let Some(parent_dir) = entry_path.parent() {
+                        let poster_jpg = parent_dir.join("poster.jpg");
+                        let cover_jpg = parent_dir.join("cover.jpg");
+                        if poster_jpg.exists() {
+                            local_poster = poster_jpg.to_string_lossy().to_string();
+                        } else if cover_jpg.exists() {
+                            local_poster = cover_jpg.to_string_lossy().to_string();
+                        }
+                    }
+
                     movies.push(serde_json::json!({
                         "title": if clean_title.is_empty() { original_title } else { clean_title },
                         "year": year,
                         "folder_path": path.clone(),
                         "video_path": entry_path.to_string_lossy().to_string(),
-                        "is_series": is_series
+                        "is_series": is_series,
+                        "poster_path": if local_poster.is_empty() { serde_json::Value::Null } else { serde_json::json!(local_poster) }
                     }));
                 }
             }

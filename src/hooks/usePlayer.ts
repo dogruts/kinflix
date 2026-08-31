@@ -104,8 +104,24 @@ export function usePlayer(p: UsePlayerParams) {
 
   const togglePlay = (e?: any) => {
     if (e) e.stopPropagation();
-    if (!videoRef.current) return;
 
+    if (selectedMovie?.video_path.startsWith("yt-")) {
+      const yt = document.getElementById("yt-player") as HTMLIFrameElement;
+      if (yt && yt.contentWindow) {
+        if (isVideoPlaying) {
+          yt.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*');
+          setIsVideoPlaying(false);
+          broadcastEvent("pause", { time: currentTime });
+        } else {
+          yt.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+          setIsVideoPlaying(true);
+          broadcastEvent("play", { time: currentTime });
+        }
+      }
+      return;
+    }
+
+    if (!videoRef.current) return;
     const cTime = videoRef.current.currentTime + transcodeOffsetRef.current;
 
     if (videoRef.current.paused) {
@@ -132,7 +148,15 @@ export function usePlayer(p: UsePlayerParams) {
   };
 
   const toggleMute = () => {
-    if(videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); }
+    if (selectedMovie?.video_path.startsWith("yt-")) {
+      const yt = document.getElementById("yt-player") as HTMLIFrameElement;
+      if (yt && yt.contentWindow) {
+        if (isMuted) yt.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
+        else yt.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'mute', args: [] }), '*');
+      }
+    }
+    if(videoRef.current) { videoRef.current.muted = !isMuted; }
+    setIsMuted(!isMuted);
   };
 
   const toggleVoiceBoost = (e?: React.MouseEvent) => {
@@ -591,20 +615,27 @@ export function usePlayer(p: UsePlayerParams) {
   const handleSeekPlayer = (timeVal: number) => {
     // DÜZELTME 1: "if(isRemoteStreaming) return;" kısıtlaması SİLİNDİ! Artık misafir de barı sürükleyebilir.
 
-    const isHevc = /265|hevc/i.test(selectedMovie?.video_path || "");
-    const isTranscodingForHost = isHostRef.current && connModeRef.current === 'webrtc' && isHevc;
-    const isTranscodingForGuest = !isHostRef.current && connModeRef.current === 'ip' && isHevc;
-
-    if (isTranscodingForHost || isTranscodingForGuest) {
-      transcodeOffsetRef.current = timeVal;
-      if (videoRef.current) {
-         const baseUrl = targetAddressRef.current.startsWith("http") ? targetAddressRef.current : `http://${targetAddressRef.current}:8765`;
-         const targetUrl = isTranscodingForHost ? "http://127.0.0.1:8765" : baseUrl;
-         videoRef.current.src = `${targetUrl}/transcode?path=${encodeURIComponent(selectedMovie!.video_path)}&start=${Math.floor(timeVal)}`;
-         videoRef.current.play().catch(()=>{});
+    if (selectedMovie?.video_path.startsWith("yt-")) {
+      const yt = document.getElementById("yt-player") as HTMLIFrameElement;
+      if (yt && yt.contentWindow) {
+        yt.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [timeVal, true] }), '*');
       }
     } else {
-      if (videoRef.current) videoRef.current.currentTime = timeVal;
+      const isHevc = /265|hevc/i.test(selectedMovie?.video_path || "");
+      const isTranscodingForHost = isHostRef.current && connModeRef.current === 'webrtc' && isHevc;
+      const isTranscodingForGuest = !isHostRef.current && connModeRef.current === 'ip' && isHevc;
+
+      if (isTranscodingForHost || isTranscodingForGuest) {
+        transcodeOffsetRef.current = timeVal;
+        if (videoRef.current) {
+           const baseUrl = targetAddressRef.current.startsWith("http") ? targetAddressRef.current : `http://${targetAddressRef.current}:8765`;
+           const targetUrl = isTranscodingForHost ? "http://127.0.0.1:8765" : baseUrl;
+           videoRef.current.src = `${targetUrl}/transcode?path=${encodeURIComponent(selectedMovie!.video_path)}&start=${Math.floor(timeVal)}`;
+           videoRef.current.play().catch(()=>{});
+        }
+      } else {
+        if (videoRef.current) videoRef.current.currentTime = timeVal;
+      }
     }
 
     setCurrentTime(timeVal);
@@ -616,6 +647,14 @@ export function usePlayer(p: UsePlayerParams) {
     const val = parseFloat(e.target.value);
     setVolume(val);
     if(val > 0) setIsMuted(false);
+
+    if (selectedMovie?.video_path.startsWith("yt-")) {
+      const yt = document.getElementById("yt-player") as HTMLIFrameElement;
+      if (yt && yt.contentWindow) {
+        yt.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [val * 100] }), '*');
+        if (val > 0) yt.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
+      }
+    }
     if(videoRef.current) videoRef.current.volume = val;
   };
 

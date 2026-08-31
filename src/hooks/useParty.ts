@@ -102,11 +102,6 @@ export function useParty(p: UsePartyParams) {
       setIsPlaying(false);
       setTargetAddress("");
     }
-
-    setTimeout(() => {
-      initPeerHost();
-      if (!isWeb) connectWebSocket("127.0.0.1");
-    }, 500);
   };
 
   const broadcastEvent = (action: string, payload: any = {}) => {
