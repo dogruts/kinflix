@@ -1,12 +1,12 @@
-import { useEffect, useRef, MutableRefObject } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface Props {
   isActive: boolean;
-  videoRef: MutableRefObject<HTMLVideoElement | null>;
+  onCommand: (action: 'play' | 'pause' | 'seek_forward' | 'seek_backward' | 'volume_up' | 'volume_down') => void;
   showToast?: (msg: string) => void;
 }
 
-export function useVoiceControl({ isActive, videoRef, showToast }: Props) {
+export function useVoiceControl({ isActive, onCommand, showToast }: Props) {
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
@@ -34,32 +34,28 @@ export function useVoiceControl({ isActive, videoRef, showToast }: Props) {
       const last = event.results.length - 1;
       const command = event.results[last][0].transcript.toLowerCase().trim();
       
-      if (!videoRef.current) return;
-
-      const v = videoRef.current;
-
       if (command.includes('durdur') || command.includes('bekle')) {
-        v.pause();
+        onCommand('pause');
         if (showToast) showToast("🎤 Kinflix: Duraklatıldı");
       } 
       else if (command.includes('başlat') || command.includes('oynat') || command.includes('devam')) {
-        v.play().catch(()=>{});
+        onCommand('play');
         if (showToast) showToast("🎤 Kinflix: Oynatılıyor");
       }
       else if (command.includes('ileri') || command.includes('geç')) {
-        v.currentTime = Math.min(v.duration, v.currentTime + 15);
+        onCommand('seek_forward');
         if (showToast) showToast("🎤 Kinflix: 15sn ileri sarıldı");
       }
       else if (command.includes('geri')) {
-        v.currentTime = Math.max(0, v.currentTime - 15);
+        onCommand('seek_backward');
         if (showToast) showToast("🎤 Kinflix: 15sn geri sarıldı");
       }
       else if (command.includes('sesi kıs') || command.includes('kıs')) {
-        v.volume = Math.max(0, v.volume - 0.2);
+        onCommand('volume_down');
         if (showToast) showToast("🎤 Kinflix: Ses kısıldı");
       }
       else if (command.includes('sesi aç') || command.includes('yükselt')) {
-        v.volume = Math.min(1, v.volume + 0.2);
+        onCommand('volume_up');
         if (showToast) showToast("🎤 Kinflix: Ses yükseltildi");
       }
     };
@@ -87,6 +83,5 @@ export function useVoiceControl({ isActive, videoRef, showToast }: Props) {
         recognitionRef.current = null;
       }
     };
-  }, [isActive, videoRef, showToast]);
+  }, [isActive, onCommand, showToast]);
 }
-

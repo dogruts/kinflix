@@ -272,8 +272,8 @@ fn scan_movies(path: String) -> Result<Vec<serde_json::Value>, String> {
     
     // Regex: S01E01 veya 1x01 tarzı dizi bölümlerini bulmak için
     let tv_regex = Regex::new(r"(?i)(S\d{1,2}E\d{1,2}|\b\d{1,2}x\d{1,2}\b)").unwrap();
-    let year_regex = Regex::new(r"(?i)[\[\(]?((?:19|20)\d{2})[\]\)]?").unwrap();
-    let junk_regex = Regex::new(r"(?i)(1080p|720p|480p|2160p|4k|bluray|x264|x265|hevc|dual|remux|webrip|hdrip|hdtv|yify|yts|aac|dd5|xvid).*$").unwrap();
+    let year_regex = Regex::new(r"(?i)[\s\.\(\[\-_]?((?:19|20)\d{2})[\s\.\)\]\-_]?").unwrap();
+    let junk_regex = Regex::new(r"(?i)(extended|directors?[\s\._]*cut|unrated|remastered|imax|1080p|720p|480p|2160p|4k|bluray|x264|x265|hevc|dual|remux|webrip|hdrip|hdtv|yify|yts|aac|dd5|xvid).*$").unwrap();
 
     // WalkDir ile derin tarama (recursive)
     for entry in WalkDir::new(path.clone()).into_iter().filter_map(|e| e.ok()) {
@@ -303,6 +303,11 @@ fn scan_movies(path: String) -> Result<Vec<serde_json::Value>, String> {
                     // 3. Çöp Yazıları Temizleme (Smart Parser)
                     clean_title = junk_regex.replace_all(&clean_title, "").to_string();
                     clean_title = clean_title.replace(".", " ").replace("_", " ").trim().to_string();
+                    
+                    if let Some(y) = year {
+                        clean_title = clean_title.replace(&y.to_string(), "").trim().to_string();
+                    }
+                    
                     // Parantezleri sil
                     let bracket_regex = Regex::new(r"(\[.*?\]|\(.*?\))").unwrap();
                     clean_title = bracket_regex.replace_all(&clean_title, "").trim().to_string();

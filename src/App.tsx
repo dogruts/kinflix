@@ -308,7 +308,18 @@ function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 3000);
   };
 
-  useVoiceControl({ isActive: expVoiceControl, videoRef, showToast });
+
+
+
+
+
+
+
+
+
+
+
+
 
   useEffect(() => {
     const timer = setTimeout(() => setShowIntro(false), 2500);
@@ -1036,7 +1047,7 @@ function App() {
     }
   });
 
-  const theaterCompanionName = partyStatus === 'connected'
+    useVoiceControl({ isActive: expVoiceControl, onCommand: (action) => { if (action === "pause" && isVideoPlaying) togglePlay(); else if (action === "play" && !isVideoPlaying) togglePlay(); else if (action === "seek_forward") handleSeekPlayer(currentTime + 15); else if (action === "seek_backward") handleSeekPlayer(Math.max(0, currentTime - 15)); else if (action === "volume_down") handleVolumeChangePlayer({ target: { value: Math.max(0, volume - 0.2) } } as any); else if (action === "volume_up") handleVolumeChangePlayer({ target: { value: Math.min(1, volume + 0.2) } } as any); }, showToast }); const theaterCompanionName = partyStatus === 'connected'
     ? (isHost ? connectedGuests[0]?.name : hostName)
     : undefined;
 
