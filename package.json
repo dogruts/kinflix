@@ -20,12 +20,16 @@
     "@tauri-apps/plugin-shell": "^2.3.5",
     "@tauri-apps/plugin-sql": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2.10.1",
+    "@vitejs/plugin-react": "^4.6.0",
     "@vladmandic/face-api": "^1.7.15",
     "peerjs": "^1.5.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tailwindcss": "^4.3.3",
     "three": "^0.185.1",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "vite-plugin-node-polyfills": "^0.28.0",
     "webtorrent": "^3.0.21"
   },
   "overrides": {
@@ -41,11 +45,7 @@
     "@types/react-dom": "^19.1.6",
     "@types/three": "^0.185.4",
     "@types/webtorrent": "^3.0.0",
-    "@vitejs/plugin-legacy": "^8.2.3",
-    "@vitejs/plugin-react": "^4.6.0",
-    "terser": "^5.51.2",
-    "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "vite-plugin-node-polyfills": "^0.28.0"
+    "@vitejs/plugin-legacy": "^7.2.1",
+    "terser": "^5.51.2"
   }
 }
